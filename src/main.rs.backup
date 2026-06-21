@@ -1,0 +1,353 @@
+use axum::{
+    Router, 
+    routing::{get, post},
+    response::Json,
+    extract::State,
+};
+use serde::{Serialize, Deserialize};
+use std::sync::Arc;
+use std::net::SocketAddr;
+use rusqlite::Connection;
+use chrono::Utc;
+use tokio::sync::Mutex;
+use sha2::{Sha256, Digest};
+use std::time::Duration;
+use tokio::time;
+use std::collections::VecDeque;
+
+mod types;
+mod auth;
+mod validator;
+mod nodes;
+mod sync;
+
+use types::QuazarEventType;
+use auth::{KeyStore, Role, check_access};
+use validator::EventValidator;
+use nodes::{NodeRegistry, Node, NodeStatus};
+use sync::SyncManager;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Event {
+    event_id: String,
+    timestamp: i64,
+    event_type: String,
+    title: String,
+    description: String,
+    initiator: String,
+    data: serde_json::Value,
+    previous_hash: String,
+    signatures: Vec<String>,
+    hash: Option<String>,
+    public: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Block {
+    block_number: u64,
+    timestamp: i64,
+    events: Vec<Event>,
+    previous_hash: String,
+    block_hash: String,
+    events_count: usize,
+}
+
+#[derive(Serialize)]
+struct AddEventResponse {
+    status: String,
+    event_id: String,
+    message: String,
+}
+
+struct AppState {
+    db: Arc<Mutex<Connection>>,
+    keystore: Arc<Mutex<KeyStore>>,
+    node_registry: Arc<Mutex<NodeRegistry>>,
+    pending_events: Arc<Mutex<VecDeque<Event>>>,
+    node_id: String,
+}
+
+fn compute_hash(data: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn compute_event_hash(event: &Event) -> String {
+    let content = format!(
+        "{}{}{}{}{}{}{}{}{}",
+        event.event_id, event.timestamp, event.event_type, event.title,
+        event.description, event.initiator, event.previous_hash,
+        serde_json::to_string(&event.data).unwrap_or_default(), event.public
+    );
+    compute_hash(&content)
+}
+
+async fn add_event(
+    State(state): State<Arc<AppState>>,
+    Json(mut event): Json<Event>,
+) -> Json<AddEventResponse> {
+    let hash = compute_event_hash(&event);
+    event.hash = Some(hash);
+    
+    let mut pending = state.pending_events.lock().await;
+    pending.push_back(event.clone());
+    let count = pending.len();
+    
+    println!("📝 Event added: {} (pending: {})", event.event_id, count);
+    
+    Json(AddEventResponse {
+        status: "pending".to_string(),
+        event_id: event.event_id,
+        message: format!("Event added ({} events waiting)", count),
+    })
+}
+
+async fn create_block(state: Arc<AppState>) -> Result<Block, String> {
+    let mut pending = state.pending_events.lock().await;
+    if pending.is_empty() {
+        return Err("No pending events".to_string());
+    }
+    
+    let events: Vec<Event> = pending.drain(..).collect();
+    let events_count = events.len();
+    
+    println!("📦 Creating block with {} events...", events_count);
+    
+    let db = state.db.lock().await;
+    
+    for event in &events {
+        let data_json = serde_json::to_string(&event.data).unwrap();
+        let sig_json = serde_json::to_string(&event.signatures).unwrap();
+        let _ = db.execute(
+            "INSERT INTO events (event_id, timestamp, event_type, title, description, initiator, data, previous_hash, signatures, hash, created_at, public)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            [
+                &event.event_id, &event.timestamp.to_string(), &event.event_type,
+                &event.title, &event.description, &event.initiator, &data_json,
+                &event.previous_hash, &sig_json, &event.hash.as_ref().unwrap(),
+                &Utc::now().to_rfc3339(), &event.public.to_string(),
+            ],
+        );
+    }
+    
+    let last_hash: String = db.query_row(
+        "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1",
+        [],
+        |row| row.get(0)
+    ).unwrap_or_else(|_| "0".to_string());
+    
+    let block_number = db.query_row(
+        "SELECT COUNT(*) FROM blocks",
+        [],
+        |row| row.get::<_, u64>(0)
+    ).unwrap_or(0) + 1;
+    
+    let block = Block {
+        block_number,
+        timestamp: Utc::now().timestamp(),
+        events: events.clone(),
+        previous_hash: last_hash,
+        block_hash: "".to_string(),
+        events_count,
+    };
+    
+    let block_hash = compute_hash(&format!(
+        "{}{}{}{}",
+        block.block_number,
+        block.timestamp,
+        block.events_count,
+        block.previous_hash
+    ));
+    
+    let mut final_block = block;
+    final_block.block_hash = block_hash.clone();
+    
+    let block_json = serde_json::to_string(&final_block).unwrap();
+    let now = Utc::now().to_rfc3339();
+    
+    match db.execute(
+        "INSERT INTO blocks (block_number, block_hash, previous_hash, timestamp, block_data, events_count, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        [
+            &final_block.block_number.to_string(),
+            &final_block.block_hash,
+            &final_block.previous_hash,
+            &final_block.timestamp.to_string(),
+            &block_json,
+            &final_block.events_count.to_string(),
+            &now,
+        ],
+    ) {
+        Ok(_) => println!("✅ Block #{} saved to DB!", block_number),
+        Err(e) => println!("❌ Failed to save block: {}", e),
+    }
+    
+    println!("✅ Block #{} created!", block_number);
+    Ok(final_block)
+}
+
+async fn get_blocks(State(state): State<Arc<AppState>>) -> Json<Vec<Block>> {
+    let db = state.db.lock().await;
+    let mut stmt = db.prepare("SELECT block_data FROM blocks ORDER BY block_number ASC").unwrap();
+    let rows = stmt.query_map([], |row| {
+        let data: String = row.get(0)?;
+        serde_json::from_str(&data).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
+    }).unwrap();
+    let blocks: Vec<Block> = rows.filter_map(|r| r.ok()).collect();
+    println!("📚 Returning {} blocks", blocks.len());
+    Json(blocks)
+}
+
+async fn get_events(State(state): State<Arc<AppState>>) -> Json<Vec<Event>> {
+    let db = state.db.lock().await;
+    let mut stmt = db.prepare("SELECT event_id, timestamp, event_type, title, description, initiator, data, previous_hash, signatures, hash, public FROM events").unwrap();
+    let rows = stmt.query_map([], |row| {
+        let data_str: String = row.get(6)?;
+        let sig_str: String = row.get(8)?;
+        Ok(Event {
+            event_id: row.get(0)?, timestamp: row.get(1)?, event_type: row.get(2)?,
+            title: row.get(3)?, description: row.get(4)?, initiator: row.get(5)?,
+            data: serde_json::from_str(&data_str).unwrap_or(serde_json::json!({})),
+            previous_hash: row.get(7)?, signatures: serde_json::from_str(&sig_str).unwrap_or(vec![]),
+            hash: Some(row.get(9)?), public: row.get(10)?,
+        })
+    }).unwrap();
+    let events: Vec<Event> = rows.filter_map(|r| r.ok()).collect();
+    Json(events)
+}
+
+async fn status() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok", "version": "0.6.0",
+        "message": "Quazar Blockchain - events grouped into blocks on sync",
+        "blockchain": true
+    }))
+}
+
+async fn get_nodes(State(state): State<Arc<AppState>>) -> Json<Vec<Node>> {
+    let registry = state.node_registry.lock().await;
+    let nodes = registry.get_all_nodes().unwrap_or_default();
+    Json(nodes)
+}
+
+async fn add_peer(
+    State(state): State<Arc<AppState>>,
+    Json(peer): Json<Node>,
+) -> Json<serde_json::Value> {
+    let registry = state.node_registry.lock().await;
+    match registry.upsert_node(&peer) {
+        Ok(_) => Json(serde_json::json!({"status": "ok", "message": "Peer added"})),
+        Err(e) => Json(serde_json::json!({"status": "error", "message": format!("Failed: {}", e)})),
+    }
+}
+
+fn init_db(path: &str) -> Result<Connection, rusqlite::Error> {
+    let conn = Connection::open(path)?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS blocks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            block_number INTEGER UNIQUE NOT NULL,
+            block_hash TEXT UNIQUE NOT NULL,
+            previous_hash TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            block_data TEXT NOT NULL,
+            events_count INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT UNIQUE NOT NULL,
+            timestamp TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            initiator TEXT NOT NULL,
+            data TEXT NOT NULL,
+            previous_hash TEXT NOT NULL,
+            signatures TEXT NOT NULL,
+            hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            public TEXT DEFAULT 'true'
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS nodes (
+            id TEXT PRIMARY KEY,
+            url TEXT NOT NULL,
+            public_key TEXT,
+            status TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            version TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+    Ok(conn)
+}
+
+async fn sync_loop(state: Arc<AppState>) {
+    let mut interval = time::interval(Duration::from_secs(30));
+    loop {
+        interval.tick().await;
+        let pending = state.pending_events.lock().await.len();
+        if pending > 0 {
+            println!("🔄 Found {} pending events, creating block...", pending);
+            match create_block(state.clone()).await {
+                Ok(block) => println!("✅ Block #{} created!", block.block_number),
+                Err(e) => println!("❌ Block creation failed: {}", e),
+            }
+        } else {
+            println!("⏳ No pending events, waiting...");
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let db_path = std::env::var("QUAZAR_DB_PATH").unwrap_or_else(|_| "/data/quazar.db".to_string());
+    let node_id = std::env::var("QUAZAR_NODE_ID").unwrap_or_else(|_| "QZ-VPS-1".to_string());
+    let node_url = std::env::var("QUAZAR_NODE_URL").unwrap_or_else(|_| "http://176.98.191.38:8080".to_string());
+    let port = std::env::var("QUAZAR_PORT").unwrap_or_else(|_| "8080".to_string());
+    
+    println!("🌟 Quazar Blockchain v0.6.0 starting...");
+    
+    let conn = init_db(&db_path).expect("DB init failed");
+    let node_registry = Arc::new(Mutex::new(NodeRegistry::new(Connection::open(&db_path).unwrap())));
+    
+    let my_node = Node {
+        id: node_id.clone(), url: node_url.clone(), public_key: None,
+        status: NodeStatus::Alive, last_seen: Utc::now().to_rfc3339(), version: "0.6.0".to_string(),
+    };
+    {
+        let registry = node_registry.lock().await;
+        let _ = registry.upsert_node(&my_node);
+    }
+    
+    let state = Arc::new(AppState {
+        db: Arc::new(Mutex::new(conn)),
+        keystore: Arc::new(Mutex::new(KeyStore::new())),
+        node_registry,
+        pending_events: Arc::new(Mutex::new(VecDeque::new())),
+        node_id,
+    });
+    
+    tokio::spawn(sync_loop(state.clone()));
+    
+    let app = Router::new()
+        .route("/status", get(status))
+        .route("/blocks", get(get_blocks))
+        .route("/events", get(get_events))
+        .route("/event", post(add_event))
+        .route("/nodes", get(get_nodes))
+        .route("/peers", post(add_peer))
+        .with_state(state);
+    
+    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+    println!("🎧 Listening on {}", addr);
+    axum::serve(tokio::net::TcpListener::bind(&addr).await.unwrap(), app).await.unwrap();
+}

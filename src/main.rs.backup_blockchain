@@ -1,0 +1,390 @@
+use axum::{
+    Router, 
+    routing::{get, post},
+    response::Json,
+    extract::State,
+};
+use serde::{Serialize, Deserialize};
+use std::sync::Arc;
+use std::net::SocketAddr;
+use rusqlite::Connection;
+use chrono::Utc;
+use tokio::sync::Mutex;
+use sha2::{Sha256, Digest};
+use std::time::Duration;
+use tokio::time;
+
+mod types;
+mod auth;
+mod validator;
+mod nodes;
+mod sync;
+
+use types::QuazarEventType;
+use auth::{KeyStore, Role, check_access};
+use validator::EventValidator;
+use nodes::{NodeRegistry, Node, NodeStatus};
+use sync::SyncManager;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Event {
+    event_id: String,
+    timestamp: i64,
+    event_type: String,
+    title: String,
+    description: String,
+    initiator: String,
+    data: serde_json::Value,
+    previous_hash: String,
+    signatures: Vec<String>,
+    hash: Option<String>,
+    public: bool,
+}
+
+#[derive(Serialize)]
+struct AddEventResponse {
+    status: String,
+    event_id: String,
+    message: String,
+}
+
+struct AppState {
+    db: Arc<Mutex<Connection>>,
+    keystore: Arc<Mutex<KeyStore>>,
+    node_registry: Arc<Mutex<NodeRegistry>>,
+    sync_manager: Arc<SyncManager>,
+    node_id: String,
+    node_url: String,
+}
+
+fn compute_hash(event: &Event) -> String {
+    let content = format!(
+        "{}{}{}{}{}{}{}{}{}",
+        event.event_id,
+        event.timestamp,
+        event.event_type,
+        event.title,
+        event.description,
+        event.initiator,
+        event.previous_hash,
+        serde_json::to_string(&event.data).unwrap_or_default(),
+        event.public,
+    );
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let result = hasher.finalize();
+    hex::encode(result)
+}
+
+async fn add_event(
+    State(state): State<Arc<AppState>>,
+    Json(mut event): Json<Event>,
+) -> Json<AddEventResponse> {
+    let keystore = state.keystore.lock().await;
+    let key_info = match keystore.validate_key("aiya_master_key_2024") {
+        Some(info) => info,
+        None => {
+            return Json(AddEventResponse {
+                status: "error".to_string(),
+                event_id: event.event_id.clone(),
+                message: "No valid API key configured".to_string(),
+            });
+        }
+    };
+    
+    let event_type = match QuazarEventType::from_str(&event.event_type) {
+        Ok(et) => et,
+        Err(_) => {
+            return Json(AddEventResponse {
+                status: "error".to_string(),
+                event_id: event.event_id,
+                message: "Invalid event type".to_string(),
+            });
+        }
+    };
+    
+    let required_role = match event_type {
+        QuazarEventType::CitizenAdded | QuazarEventType::PassportIssued => Role::Guardian,
+        QuazarEventType::CourtRuling | QuazarEventType::CitizenRemoved => Role::Judge,
+        QuazarEventType::AiyaElected | QuazarEventType::AppointmentGuardian => Role::Aiya,
+        _ => Role::Guardian,
+    };
+    
+    if !check_access(&key_info.role, &required_role) {
+        return Json(AddEventResponse {
+            status: "error".to_string(),
+            event_id: event.event_id,
+            message: format!("Insufficient permissions. Required: {:?}", required_role),
+        });
+    }
+    
+    let db = state.db.lock().await;
+    
+    let mut stmt = db.prepare("SELECT event_id FROM events WHERE event_id = ?1").unwrap();
+    let exists: bool = stmt.exists([&event.event_id]).unwrap();
+    
+    if exists {
+        return Json(AddEventResponse {
+            status: "error".to_string(),
+            event_id: event.event_id,
+            message: "Event with this ID already exists".to_string(),
+        });
+    }
+    
+    let citizens = match EventValidator::get_citizens(&db) {
+        Ok(cits) => cits,
+        Err(_) => vec![],
+    };
+    
+    if let Err(e) = EventValidator::validate_event_data(&event_type, &event.data, &citizens) {
+        return Json(AddEventResponse {
+            status: "error".to_string(),
+            event_id: event.event_id,
+            message: format!("Validation failed: {:?}", e),
+        });
+    }
+    
+    let hash = compute_hash(&event);
+    event.hash = Some(hash.clone());
+    
+    let signatures_json = serde_json::to_string(&event.signatures).unwrap();
+    let data_json = serde_json::to_string(&event.data).unwrap();
+    
+    match db.execute(
+        "INSERT INTO events (event_id, timestamp, event_type, title, description, initiator, data, previous_hash, signatures, hash, created_at, public)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        [
+            &event.event_id,
+            &event.timestamp.to_string(),
+            &event.event_type,
+            &event.title,
+            &event.description,
+            &event.initiator,
+            &data_json,
+            &event.previous_hash,
+            &signatures_json,
+            &hash,
+            &Utc::now().to_rfc3339(),
+            &event.public.to_string(),
+        ],
+    ) {
+        Ok(_) => {
+            println!("Event inserted: {}", event.event_id);
+            let sync_manager = state.sync_manager.clone();
+            let sync_clone = sync_manager.clone();
+            let db_clone = state.db.clone();
+            tokio::spawn(async move {
+                sync_clone.sync_with_all_peers(db_clone).await;
+            });
+            
+            Json(AddEventResponse {
+                status: "success".to_string(),
+                event_id: event.event_id,
+                message: "Event registered successfully".to_string(),
+            })
+        },
+        Err(e) => {
+            eprintln!("Database insert error: {}", e);
+            Json(AddEventResponse {
+                status: "error".to_string(),
+                event_id: event.event_id,
+                message: format!("Database error: {}", e),
+            })
+        }
+    }
+}
+
+async fn get_events(State(state): State<Arc<AppState>>) -> Json<Vec<Event>> {
+    let db = state.db.lock().await;
+    
+    let mut stmt = match db.prepare(
+        "SELECT event_id, timestamp, event_type, title, description, initiator, data, previous_hash, signatures, hash, public FROM events ORDER BY timestamp ASC"
+    ) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("Failed to prepare statement: {}", e);
+            return Json(vec![]);
+        }
+    };
+    
+    let rows = stmt.query_map([], |row| {
+        let event_id: String = row.get(0)?;
+        let timestamp_str: String = row.get(1)?;
+        let timestamp: i64 = timestamp_str.parse().unwrap_or(0);
+        let event_type: String = row.get(2)?;
+        let title: String = row.get(3)?;
+        let description: String = row.get(4)?;
+        let initiator: String = row.get(5)?;
+        let data_str: String = row.get(6)?;
+        let previous_hash: String = row.get(7)?;
+        let signatures_str: String = row.get(8)?;
+        let hash: String = row.get(9)?;
+        let public_str: String = row.get(10)?;
+        let public_flag = public_str == "true" || public_str == "1";
+        
+        let data: serde_json::Value = serde_json::from_str(&data_str).unwrap_or(serde_json::json!({}));
+        let signatures: Vec<String> = serde_json::from_str(&signatures_str).unwrap_or(vec![]);
+        
+        Ok(Event {
+            event_id,
+            timestamp,
+            event_type,
+            title,
+            description,
+            initiator,
+            data,
+            previous_hash,
+            signatures,
+            hash: Some(hash),
+            public: public_flag,
+        })
+    });
+    
+    match rows {
+        Ok(rows) => {
+            let events: Vec<Event> = rows.filter_map(|r| r.ok()).collect();
+            println!("Returning {} events", events.len());
+            Json(events)
+        },
+        Err(e) => {
+            eprintln!("Query error: {}", e);
+            Json(vec![])
+        }
+    }
+}
+
+async fn status() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": "0.4.0",
+        "message": "Quazar Registry Agent is running"
+    }))
+}
+
+async fn get_nodes(State(state): State<Arc<AppState>>) -> Json<Vec<Node>> {
+    let registry = state.node_registry.lock().await;
+    let nodes = registry.get_all_nodes().unwrap_or_default();
+    Json(nodes)
+}
+
+async fn add_peer(
+    State(state): State<Arc<AppState>>,
+    Json(peer): Json<Node>,
+) -> Json<serde_json::Value> {
+    let registry = state.node_registry.lock().await;
+    match registry.upsert_node(&peer) {
+        Ok(_) => {
+            println!("New peer registered: {} ({})", peer.id, peer.url);
+            Json(serde_json::json!({"status": "ok", "message": "Peer added"}))
+        },
+        Err(e) => Json(serde_json::json!({"status": "error", "message": format!("Failed to add peer: {}", e)})),
+    }
+}
+
+fn init_db(path: &str) -> Result<Connection, rusqlite::Error> {
+    let conn = Connection::open(path)?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT UNIQUE NOT NULL,
+            timestamp TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            initiator TEXT NOT NULL,
+            data TEXT NOT NULL,
+            previous_hash TEXT NOT NULL,
+            signatures TEXT NOT NULL,
+            hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            public TEXT DEFAULT 'true'
+        )",
+        [],
+    )?;
+    Ok(conn)
+}
+
+async fn start_background_sync(sync_manager: Arc<SyncManager>, db: Arc<Mutex<Connection>>) {
+    let mut interval = time::interval(Duration::from_secs(30));
+    loop {
+        interval.tick().await;
+        println!("Running background sync...");
+        let sync_clone = sync_manager.clone();
+        let db_clone = db.clone();
+        tokio::spawn(async move {
+            sync_clone.sync_with_all_peers(db_clone).await;
+        });
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt::init();
+    
+    println!("Quazar Registry Agent starting...");
+    
+    let db_path = std::env::var("QUAZAR_DB_PATH").unwrap_or_else(|_| "/tmp/quazar_registry.db".to_string());
+    let node_id = std::env::var("QUAZAR_NODE_ID").unwrap_or_else(|_| "QZ-NODE-1".to_string());
+    let node_url = std::env::var("QUAZAR_NODE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let port = std::env::var("QUAZAR_PORT").unwrap_or_else(|_| "8080".to_string());
+    
+    println!("Database path: {}", db_path);
+    println!("Node ID: {}", node_id);
+    println!("Node URL: {}", node_url);
+    println!("Port: {}", port);
+    
+    let conn = init_db(&db_path).expect("Failed to initialize database");
+    
+    let conn_for_registry = Connection::open(&db_path).expect("Failed to open connection for registry");
+    let node_registry = Arc::new(Mutex::new(NodeRegistry::new(conn_for_registry)));
+    
+    let my_node = Node {
+        id: node_id.clone(),
+        url: node_url.clone(),
+        public_key: None,
+        status: NodeStatus::Alive,
+        last_seen: Utc::now().to_rfc3339(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    
+    {
+        let registry = node_registry.lock().await;
+        registry.upsert_node(&my_node).expect("Failed to register self node");
+    }
+    
+    let sync_manager = Arc::new(SyncManager::new(
+        node_registry.clone(),
+        node_url.clone(),
+        node_id.clone(),
+    ));
+    
+    let state = Arc::new(AppState {
+        db: Arc::new(Mutex::new(conn)),
+        keystore: Arc::new(Mutex::new(KeyStore::new())),
+        node_registry: node_registry.clone(),
+        sync_manager: sync_manager.clone(),
+        node_id: node_id.clone(),
+        node_url: node_url.clone(),
+    });
+    
+    // Запускаем фоновую синхронизацию
+    let sync_for_bg = sync_manager.clone();
+    let db_for_bg = state.db.clone();
+    tokio::spawn(async move {
+        start_background_sync(sync_for_bg, db_for_bg).await;
+    });
+    
+    let app = Router::new()
+        .route("/status", get(status))
+        .route("/events", get(get_events))
+        .route("/event", post(add_event))
+        .route("/nodes", get(get_nodes))
+        .route("/peers", post(add_peer))
+        .with_state(state);
+    
+    let addr = format!("0.0.0.0:{}", port).parse::<SocketAddr>().unwrap();
+    println!("Listening on {}", addr);
+    
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
