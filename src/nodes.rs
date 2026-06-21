@@ -45,6 +45,12 @@ pub struct NodeRegistry {
 }
 
 impl NodeRegistry {
+    pub fn sync_peers(&self, peers: Vec<Node>) -> Result<()> {
+        for peer in peers {
+            let _ = self.upsert_node(&peer);
+        }
+        Ok(())
+    }
     pub fn new(conn: Connection) -> Self {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS nodes (
@@ -136,3 +142,4 @@ impl NodeRegistry {
         Ok(())
     }
 }
+

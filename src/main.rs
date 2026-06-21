@@ -184,7 +184,41 @@ async fn create_block(state: Arc<AppState>) -> Result<Block, String> {
         Ok(_) => println!("✅ Block #{} saved!", block_number),
         Err(e) => println!("❌ Failed to save block: {}", e),
     }
-    
+
+    // 🔥 АВТО-ДОБАВЛЕНИЕ ПИРОВ ИЗ БЛОКА
+    for event in &events {
+        if event.event_type == "PeerListUpdate" {
+            println!("🔄 Авто-добавление пиров из события: {}", event.event_id);
+            if let Some(peers) = event.data.get("peers").and_then(|v| v.as_array()) {
+                let registry = state.node_registry.lock().await;
+                for peer_data in peers {
+                    if let (Some(id), Some(url), Some(status_str)) = (
+                        peer_data.get("id").and_then(|v| v.as_str()),
+                        peer_data.get("url").and_then(|v| v.as_str()),
+                        peer_data.get("status").and_then(|v| v.as_str()),
+                    ) {
+                        let status = match status_str {
+                            "alive" => NodeStatus::Alive,
+                            "dead" => NodeStatus::Dead,
+                            _ => NodeStatus::Alive,
+                        };
+                        let peer = Node {
+                            id: id.to_string(),
+                            url: url.to_string(),
+                            public_key: None,
+                            status,
+                            last_seen: chrono::Utc::now().to_rfc3339(),
+                            version: "0.7.0".to_string(),
+                        };
+                        let _ = registry.upsert_node(&peer);
+                        println!("✅ Авто-добавлен пир из блока: {} ({})", id, url);
+                    }
+                }
+                drop(registry);
+            }
+        }
+    }
+
     Ok(final_block)
 }
 
@@ -322,14 +356,21 @@ async fn add_peer_to_network(
         description: format!("Добавлен узел {} ({})", peer.id, peer.url),
         initiator: state.node_id.clone(),
         data: serde_json::json!({
-            "action": "add",
-            "peer": {
+
+            "peers": [{
+
                 "id": peer.id,
+
                 "url": peer.url,
+
                 "status": peer.status.to_string(),
+
                 "version": peer.version,
+
                 "last_seen": peer.last_seen,
-            }
+
+            }]
+
         }),
         previous_hash: "0".to_string(),
         signatures: vec!["admin_sig".to_string()],

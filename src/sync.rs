@@ -5,30 +5,9 @@ use reqwest::Client;
 use crate::nodes::NodeRegistry;
 use rusqlite::Connection;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct Block {
-    block_number: u64,
-    timestamp: i64,
-    events: Vec<Event>,
-    previous_hash: String,
-    block_hash: String,
-    events_count: usize,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct Event {
-    event_id: String,
-    timestamp: i64,
-    event_type: String,
-    title: String,
-    description: String,
-    initiator: String,
-    data: serde_json::Value,
-    previous_hash: String,
-    signatures: Vec<String>,
-    hash: Option<String>,
-    public: bool,
-}
+// Импортируем структуры из main.rs через crate
+use crate::Event;
+use crate::Block;
 
 pub struct SyncManager {
     client: Client,
@@ -57,7 +36,6 @@ impl SyncManager {
                     
                     let db = db.lock().await;
                     for block in peer_blocks {
-                        // Проверяем, есть ли уже такой блок
                         let exists: bool = db.query_row(
                             "SELECT COUNT(*) FROM blocks WHERE block_number = ?1",
                             [&block.block_number.to_string()],
@@ -81,7 +59,6 @@ impl SyncManager {
                             ).map_err(|e| e.to_string())?;
                             println!("✅ Synced block #{} from peer", block.block_number);
                             
-                            // Также сохраняем события из блока
                             for event in block.events {
                                 let data_json = serde_json::to_string(&event.data).unwrap();
                                 let sig_json = serde_json::to_string(&event.signatures).unwrap();
