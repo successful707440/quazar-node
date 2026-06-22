@@ -14,6 +14,8 @@ use sha2::{Sha256, Digest};
 use std::time::Duration;
 use tokio::time;
 use std::collections::VecDeque;
+use tower::ServiceBuilder;
+use tower_http::trace::TraceLayer;
 
 mod types;
 mod auth;
@@ -356,21 +358,13 @@ async fn add_peer_to_network(
         description: format!("Добавлен узел {} ({})", peer.id, peer.url),
         initiator: state.node_id.clone(),
         data: serde_json::json!({
-
             "peers": [{
-
                 "id": peer.id,
-
                 "url": peer.url,
-
                 "status": peer.status.to_string(),
-
                 "version": peer.version,
-
                 "last_seen": peer.last_seen,
-
             }]
-
         }),
         previous_hash: "0".to_string(),
         signatures: vec!["admin_sig".to_string()],
@@ -598,6 +592,7 @@ async fn main() {
         .route("/online", post(online_handler))
         .route("/offline", post(offline_handler))
         .route("/vote", post(cast_vote_handler))
+        .layer(TraceLayer::new_for_http())
         .with_state(state);
     
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
