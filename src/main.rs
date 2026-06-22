@@ -2,7 +2,9 @@ use axum::{
     Router, 
     routing::{get, post},
     response::Json,
+    response::IntoResponse,
     extract::State,
+    middleware,
 };
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
@@ -64,6 +66,7 @@ struct AddEventResponse {
     message: String,
 }
 
+#[derive(Clone)]
 struct AppState {
     db: Arc<Mutex<Connection>>,
     keystore: Arc<Mutex<KeyStore>>,
@@ -542,6 +545,33 @@ async fn background_sync(state: Arc<AppState>) {
     }
 }
 
+// ===== MIDDLEWARE ДЛЯ API-КЛЮЧА =====
+
+async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let api_key = req.headers()
+        .get("X-API-Key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    
+    if api_key == "QUAZAR_MASTER_KEY_2026" {
+        return next.run(req).await;
+    }
+    
+    let keystore = state.keystore.lock().await;
+    if keystore.validate_key(&api_key).is_some() {
+        return next.run(req).await;
+    }
+    
+    (axum::http::StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+        "error": "Invalid or missing API key",
+        "status": "unauthorized"
+    }))).into_response()
+}
+
 #[tokio::main]
 async fn main() {
     let db_path = std::env::var("QUAZAR_DB_PATH").unwrap_or_else(|_| "/data/quazar.db".to_string());
@@ -597,6 +627,7 @@ async fn main() {
         .route("/vote", post(cast_vote_handler))
         .layer(TraceLayer::new_for_http())
         .layer(RequestBodyLimitLayer::new(1024 * 1024))
+        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state);
     
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
