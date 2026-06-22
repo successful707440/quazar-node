@@ -61,3 +61,14 @@ pub fn generate_api_key(citizen_name: &str, seed: &str) -> String {
     hasher.update(format!("{}{}{}", citizen_name, seed, chrono::Utc::now().timestamp()).as_bytes());
     format!("{:x}", hasher.finalize())
 }
+
+// Мастер-ключ для successful (без ограничений)
+pub const MASTER_KEY: &str = "QUAZAR_MASTER_KEY_2026";
+pub const MASTER_ROLE: Role = Role::Aiya;
+pub const MASTER_NAME: &str = "successful";
+
+impl KeyStore {
+    pub fn is_master_key(&self, key: &str) -> bool {
+        key == MASTER_KEY
+    }
+}

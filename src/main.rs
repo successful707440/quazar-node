@@ -15,7 +15,10 @@ use std::time::Duration;
 use tokio::time;
 use std::collections::VecDeque;
 use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
+use tower_http::{
+    trace::TraceLayer,
+    limit::RequestBodyLimitLayer,
+};
 
 mod types;
 mod auth;
@@ -593,6 +596,7 @@ async fn main() {
         .route("/offline", post(offline_handler))
         .route("/vote", post(cast_vote_handler))
         .layer(TraceLayer::new_for_http())
+        .layer(RequestBodyLimitLayer::new(1024 * 1024))
         .with_state(state);
     
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
