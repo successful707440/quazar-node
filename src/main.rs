@@ -20,6 +20,7 @@ use tower::ServiceBuilder;
 use tower_http::{
     trace::TraceLayer,
     limit::RequestBodyLimitLayer,
+    cors::CorsLayer,
 };
 
 mod types;
@@ -626,6 +627,7 @@ async fn main() {
         .route("/offline", post(offline_handler))
         .route("/vote", post(cast_vote_handler))
         .layer(TraceLayer::new_for_http())
+        .layer(CorsLayer::permissive())
         .layer(RequestBodyLimitLayer::new(1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state);
