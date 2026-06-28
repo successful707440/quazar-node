@@ -558,15 +558,30 @@ async fn auth_middleware(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     
+    // Проверяем мастер-ключ
     if api_key == "QUAZAR_MASTER_KEY_2026" {
         return next.run(req).await;
     }
     
+    // Проверяем обычные ключи
     let keystore = state.keystore.lock().await;
-    if keystore.validate_key(&api_key).is_some() {
+    if let Some(key_data) = keystore.validate_key(api_key) {
+        // Проверяем роль для /peers/network
+        if req.uri().path() == "/peers/network" {
+            if key_data.role != Role::Aiya && key_data.role != Role::Guardian {
+                return (
+                    axum::http::StatusCode::FORBIDDEN,
+                    axum::response::Json(serde_json::json!({
+                        "error": "Insufficient permissions. Only Aiya and Guardian can add peers",
+                        "status": "forbidden"
+                    }))
+                ).into_response();
+            }
+        }
         return next.run(req).await;
     }
     
+    // Если ключ невалидный
     (axum::http::StatusCode::UNAUTHORIZED, Json(serde_json::json!({
         "error": "Invalid or missing API key",
         "status": "unauthorized"
