@@ -1,6 +1,6 @@
 use axum::{
     Router, 
-    routing::{get, post, delete},
+    routing::{get, post},
     response::Json,
     response::IntoResponse,
     extract::State,
@@ -16,6 +16,7 @@ use sha2::{Sha256, Digest};
 use std::time::Duration;
 use tokio::time;
 use std::collections::VecDeque;
+use tower::ServiceBuilder;
 use tower_http::{
     trace::TraceLayer,
     limit::RequestBodyLimitLayer,
@@ -27,7 +28,7 @@ mod auth;
 mod validator;
 mod nodes;
 mod sync;
-mod exchange;
+
 use types::QuazarEventType;
 use auth::{KeyStore, Role, check_access};
 use validator::EventValidator;
@@ -193,6 +194,7 @@ async fn create_block(state: Arc<AppState>) -> Result<Block, String> {
         Err(e) => println!("❌ Failed to save block: {}", e),
     }
 
+    // 🔥 АВТО-ДОБАВЛЕНИЕ ПИРОВ ИЗ БЛОКА
     for event in &events {
         if event.event_type == "PeerListUpdate" {
             println!("🔄 Авто-добавление пиров из события: {}", event.event_id);
@@ -461,8 +463,6 @@ fn init_db(path: &str) -> Result<Connection, rusqlite::Error> {
         )",
         [],
     )?;
-
-    exchange::init_exchange_tables(&conn)?;
     Ok(conn)
 }
 
@@ -546,45 +546,24 @@ async fn background_sync(state: Arc<AppState>) {
     }
 }
 
-// ===== MIDDLEWARE ДЛЯ API-КЛЮЧА (Authorization: Bearer) =====
+// ===== MIDDLEWARE ДЛЯ API-КЛЮЧА =====
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
-    mut req: axum::http::Request<axum::body::Body>,
+    req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let api_key = req.headers()
-        .get("Authorization")
+        .get("X-API-Key")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| {
-            if v.starts_with("Bearer ") {
-                Some(v[7..].to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
+        .unwrap_or("");
     
     if api_key == "QUAZAR_MASTER_KEY_2026" {
-        req.extensions_mut().insert("successful".to_string());
         return next.run(req).await;
     }
     
     let keystore = state.keystore.lock().await;
-    if let Some(key_data) = keystore.validate_key(&api_key) {
-        req.extensions_mut().insert(key_data.citizen_name.clone());
-        
-        if req.uri().path() == "/peers/network" {
-            if key_data.role != Role::Aiya && key_data.role != Role::Guardian {
-                return (
-                    axum::http::StatusCode::FORBIDDEN,
-                    axum::response::Json(serde_json::json!({
-                        "error": "Insufficient permissions. Only Aiya and Guardian can add peers",
-                        "status": "forbidden"
-                    }))
-                ).into_response();
-            }
-        }
+    if keystore.validate_key(&api_key).is_some() {
         return next.run(req).await;
     }
     
@@ -593,7 +572,6 @@ async fn auth_middleware(
         "status": "unauthorized"
     }))).into_response()
 }
-
 #[tokio::main]
 async fn main() {
     let db_path = std::env::var("QUAZAR_DB_PATH").unwrap_or_else(|_| "/data/quazar.db".to_string());
@@ -647,15 +625,6 @@ async fn main() {
         .route("/online", post(online_handler))
         .route("/offline", post(offline_handler))
         .route("/vote", post(cast_vote_handler))
-        // Эндпоинты биржи
-        .route("/exchange/offer", post(exchange::create_offer))
-        .route("/exchange/offers", get(exchange::get_offers))
-        .route("/exchange/offer/:id", get(exchange::get_offer_by_id))
-        .route("/exchange/offer/:id", delete(exchange::cancel_offer))
-        .route("/exchange/order", post(exchange::create_order))
-        .route("/exchange/orders", get(exchange::get_orders))
-        .route("/exchange/balance", get(exchange::get_balance_handler))
-        .route("/exchange/balance/add", post(exchange::add_balance))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .layer(RequestBodyLimitLayer::new(1024 * 1024))

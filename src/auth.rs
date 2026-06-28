@@ -22,14 +22,47 @@ pub struct KeyStore {
 impl KeyStore {
     pub fn new() -> Self {
         let mut keys = HashMap::new();
+        
+        // Мастер-ключ для Aiya
         keys.insert(
             "aiya_master_key_2024".to_string(),
             ApiKey {
                 key: "aiya_master_key_2024".to_string(),
                 role: Role::Aiya,
-                citizen_name: "Successful".to_string(),
+                citizen_name: "successful".to_string(),
             },
         );
+        
+        // Ключ для test_citizen
+        keys.insert(
+            "test_citizen_key_2026".to_string(),
+            ApiKey {
+                key: "test_citizen_key_2026".to_string(),
+                role: Role::Citizen,
+                citizen_name: "test_citizen".to_string(),
+            },
+        );
+        
+        // Ключ для покупателя
+        keys.insert(
+            "buyer_key_2026".to_string(),
+            ApiKey {
+                key: "buyer_key_2026".to_string(),
+                role: Role::Citizen,
+                citizen_name: "buyer_citizen".to_string(),
+            },
+        );
+        
+        // Ключ для продавца
+        keys.insert(
+            "seller_key_2026".to_string(),
+            ApiKey {
+                key: "seller_key_2026".to_string(),
+                role: Role::Citizen,
+                citizen_name: "seller_citizen".to_string(),
+            },
+        );
+        
         Self { keys }
     }
 
@@ -44,6 +77,10 @@ impl KeyStore {
 
     pub fn remove_key(&mut self, key: &str) {
         self.keys.remove(key);
+    }
+
+    pub fn is_master_key(&self, key: &str) -> bool {
+        key == "QUAZAR_MASTER_KEY_2026"
     }
 }
 
@@ -62,13 +99,6 @@ pub fn generate_api_key(citizen_name: &str, seed: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-// Мастер-ключ для successful (без ограничений)
 pub const MASTER_KEY: &str = "QUAZAR_MASTER_KEY_2026";
 pub const MASTER_ROLE: Role = Role::Aiya;
 pub const MASTER_NAME: &str = "successful";
-
-impl KeyStore {
-    pub fn is_master_key(&self, key: &str) -> bool {
-        key == MASTER_KEY
-    }
-}

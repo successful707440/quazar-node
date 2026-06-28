@@ -4,6 +4,7 @@ version = "0.6.0"
 edition = "2021"
 
 [dependencies]
+axum-extra = { version = "0.9", features = ["typed-header"] }
 dashmap = "5.5"
 governor = "0.6"
 axum = "0.7"
@@ -21,3 +22,4 @@ thiserror = "1"
 rand = "0.8"
 tower = { version = "0.4", features = ["limit"] }
 tower-http = { version = "0.7", features = ["auth", "limit", "trace", "cors", "compression-gzip"] }
+uuid = { version = "1", features = ["v4"] }  # <-- ДОБАВЬТЕ ЭТУ СТРОКУ
