@@ -1,6 +1,6 @@
 use axum::{
     Router, 
-    routing::{get, post, delete},
+    routing::{get, post, delete, patch},
     response::Json,
     response::IntoResponse,
     extract::State,
@@ -23,6 +23,8 @@ use tower_http::{
 };
 
 mod types;
+mod citizen;
+use citizen::*;
 mod auth;
 mod validator;
 mod nodes;
@@ -463,6 +465,8 @@ fn init_db(path: &str) -> Result<Connection, rusqlite::Error> {
     )?;
 
     exchange::init_exchange_tables(&conn)?;
+citizen::init_citizen_tables(&conn)?;
+    citizen::init_citizen_tables(&conn)?;
     Ok(conn)
 }
 
@@ -656,6 +660,13 @@ async fn main() {
         .route("/exchange/orders", get(exchange::get_orders))
         .route("/exchange/balance", get(exchange::get_balance_handler))
         .route("/exchange/balance/add", post(exchange::add_balance))
+        .route("/citizen/register", post(register_citizen))
+        .route("/citizen/list", get(list_citizens))
+        .route("/citizen/:id", get(get_citizen))
+        .route("/citizen/:id/status", patch(update_status))
+        .route("/citizen/:id/passport", post(issue_passport))
+        .route("/citizen/:id/passport/revoke", post(revoke_passport))
+        .route("/citizen/search", get(search_citizens))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .layer(RequestBodyLimitLayer::new(1024 * 1024))
