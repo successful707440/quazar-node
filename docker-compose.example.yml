@@ -1,0 +1,90 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: quazar
+      POSTGRES_PASSWORD: quazar
+      POSTGRES_DB: quazar
+    ports:
+      - "5432:5432"
+    volumes:
+      - quazar_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quazar -d quazar"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postgres-2:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: quazar
+      POSTGRES_PASSWORD: quazar
+      POSTGRES_DB: quazar
+    ports:
+      - "5433:5432"
+    volumes:
+      - quazar_pg_data_2:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quazar -d quazar"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  quazar-node:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://quazar:quazar@postgres:5432/quazar
+      QUAZAR_MASTER_KEY: QUAZAR_MASTER_KEY_2026
+      QUAZAR_NODE_SECRET: QUAZAR_NODE_SECRET_2026
+      QUAZAR_REG_SECRET: QUAZAR_REG_SECRET_2026
+      QUAZAR_INIT_TEST_KEYS: "true"
+      QUAZAR_NODE_ID: QZ-NODE-1
+      QUAZAR_NODE_URL: http://quazar-node:8080
+      QUAZAR_PORT: "8080"
+      QUAZAR_BLOCK_MIN_EVENTS: "3"
+      QUAZAR_BLOCK_MAX_WAIT_SECS: "30"
+      QUAZAR_SYNC_INTERVAL_SECS: "60"
+      QUAZAR_BOOTSTRAP_PEERS: QZ-NODE-2@http://quazar-node-2:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  quazar-node-2:
+    build: .
+    ports:
+      - "8081:8080"
+    environment:
+      DATABASE_URL: postgres://quazar:quazar@postgres-2:5432/quazar
+      QUAZAR_MASTER_KEY: QUAZAR_MASTER_KEY_2026
+      QUAZAR_NODE_SECRET: QUAZAR_NODE_SECRET_2026
+      QUAZAR_REG_SECRET: QUAZAR_REG_SECRET_2026
+      QUAZAR_INIT_TEST_KEYS: "true"
+      QUAZAR_NODE_ID: QZ-NODE-2
+      QUAZAR_NODE_URL: http://quazar-node-2:8080
+      QUAZAR_PORT: "8080"
+      QUAZAR_BLOCK_MIN_EVENTS: "3"
+      QUAZAR_BLOCK_MAX_WAIT_SECS: "30"
+      QUAZAR_SYNC_INTERVAL_SECS: "60"
+      QUAZAR_BOOTSTRAP_PEERS: QZ-NODE-1@http://quazar-node:8080
+    depends_on:
+      postgres-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  quazar_pg_data:
+  quazar_pg_data_2:

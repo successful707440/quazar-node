@@ -1,21 +1,28 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
 };
-use axum_extra::headers::{Authorization, authorization::Bearer};
-use axum_extra::TypedHeader;
-use rusqlite::{params, Connection, Result as SqliteResult};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::AppState;
+pub use crate::types::Role;
 
-// ============ DATA STRUCTURES ============
+use crate::auth::{registration_signature, AuthContext};
+use crate::block_producer;
+use crate::blockchain::{
+    build_citizen_added_event, build_signed_citizen_status_event,
+    build_signed_passport_issued_event, build_signed_passport_revoked_event, compute_event_hash,
+};
+use crate::models::Event;
+use crate::pending;
+use crate::response::ApiResponse;
+use crate::validator::EventValidator;
+use crate::AppState;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum CitizenStatus {
@@ -43,36 +50,7 @@ impl CitizenStatus {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum Role {
-    Citizen,
-    Judge,
-    Guardian,
-    Aiya,
-}
-
-impl Role {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Role::Citizen => "Citizen",
-            Role::Judge => "Judge",
-            Role::Guardian => "Guardian",
-            Role::Aiya => "Aiya",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "Citizen" => Some(Role::Citizen),
-            "Judge" => Some(Role::Judge),
-            "Guardian" => Some(Role::Guardian),
-            "Aiya" => Some(Role::Aiya),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct Citizen {
     pub id: String,
     pub name: String,
@@ -84,22 +62,41 @@ pub struct Citizen {
     pub passport_expires: Option<i64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Passport {
-    pub id: String,
-    pub citizen_id: String,
-    pub issued_at: i64,
-    pub expires_at: i64,
-    pub is_valid: bool,
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct CitizenRow {
+    id: String,
+    name: String,
+    public_key: String,
+    status: String,
+    role: String,
+    created_at: i64,
+    passport_issued: bool,
+    passport_expires: Option<i64>,
 }
 
-// ============ REQUESTS ============
+impl TryFrom<CitizenRow> for Citizen {
+    type Error = CitizenError;
+
+    fn try_from(row: CitizenRow) -> Result<Self, Self::Error> {
+        Ok(Citizen {
+            id: row.id,
+            name: row.name,
+            public_key: row.public_key,
+            status: CitizenStatus::from_str(&row.status).ok_or(CitizenError::InvalidStatus)?,
+            role: Role::from_str(&row.role).ok_or(CitizenError::InvalidRole)?,
+            created_at: row.created_at,
+            passport_issued: row.passport_issued,
+            passport_expires: row.passport_expires,
+        })
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterCitizenRequest {
     pub name: String,
     pub public_key: String,
     pub role: Option<String>,
+    pub birth_place: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,8 +113,6 @@ pub struct UpdateStatusRequest {
 pub struct SearchQuery {
     pub q: String,
 }
-
-// ============ RESPONSES ============
 
 #[derive(Debug, Serialize)]
 pub struct CitizenResponse {
@@ -147,60 +142,39 @@ impl From<Citizen> for CitizenResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct RegisterCitizenResponse {
+    pub id: String,
+    pub name: String,
+    pub public_key: String,
+    pub role: String,
+    pub registration_status: String,
+    pub event_id: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PendingCitizenEventResponse {
+    pub citizen_id: String,
+    pub event_id: String,
+    pub event_type: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PendingPassportEventResponse {
+    pub citizen_id: String,
+    pub passport_id: String,
+    pub event_id: String,
+    pub event_type: String,
+    pub expires_at: Option<i64>,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct CitizensListResponse {
     pub citizens: Vec<CitizenResponse>,
     pub total: usize,
 }
-
-#[derive(Debug, Serialize)]
-pub struct PassportResponse {
-    pub id: String,
-    pub citizen_id: String,
-    pub issued_at: i64,
-    pub expires_at: i64,
-    pub is_valid: bool,
-}
-
-impl From<Passport> for PassportResponse {
-    fn from(p: Passport) -> Self {
-        PassportResponse {
-            id: p.id,
-            citizen_id: p.citizen_id,
-            issued_at: p.issued_at,
-            expires_at: p.expires_at,
-            is_valid: p.is_valid,
-        }
-    }
-}
-
-// ============ API RESPONSE ============
-
-#[derive(Debug, Serialize)]
-pub struct ApiResponse {
-    pub status: String,
-    pub data: Option<Value>,
-    pub error: Option<String>,
-}
-
-impl ApiResponse {
-    pub fn success<T: Serialize>(data: T) -> Self {
-        ApiResponse {
-            status: "success".to_string(),
-            data: Some(serde_json::to_value(data).unwrap_or(Value::Null)),
-            error: None,
-        }
-    }
-
-    pub fn error(error: String) -> Self {
-        ApiResponse {
-            status: "error".to_string(),
-            data: None,
-            error: Some(error),
-        }
-    }
-}
-
-// ============ ERROR HANDLING ============
 
 #[derive(Debug)]
 pub enum CitizenError {
@@ -211,13 +185,9 @@ pub enum CitizenError {
     PassportAlreadyIssued,
     PassportNotFound,
     InsufficientPermissions,
+    InvalidCitizenName(String),
+    InvalidPublicKey,
     DatabaseError(String),
-}
-
-impl From<rusqlite::Error> for CitizenError {
-    fn from(err: rusqlite::Error) -> Self {
-        CitizenError::DatabaseError(err.to_string())
-    }
 }
 
 impl CitizenError {
@@ -244,132 +214,158 @@ impl CitizenError {
             CitizenError::InsufficientPermissions => {
                 (StatusCode::FORBIDDEN, "Недостаточно прав".to_string())
             }
-            CitizenError::DatabaseError(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("Ошибка базы данных: {}", msg))
-            }
+            CitizenError::InvalidCitizenName(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            CitizenError::InvalidPublicKey => (
+                StatusCode::BAD_REQUEST,
+                "public_key должен быть 32 байта в hex (64 символа, допускается префикс 0x)".to_string(),
+            ),
+            CitizenError::DatabaseError(msg) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Ошибка базы данных: {}", msg),
+            ),
         };
         (status, Json(ApiResponse::error(message)))
     }
 }
 
-// ============ DB FUNCTIONS ============
+fn reject_node(auth: &AuthContext) -> Option<(StatusCode, Json<ApiResponse>)> {
+    if auth.is_node {
+        Some(CitizenError::InsufficientPermissions.to_response())
+    } else {
+        None
+    }
+}
 
-pub fn init_citizen_tables(conn: &Connection) -> SqliteResult<()> {
-    conn.execute_batch(
+async fn get_citizen_by_name(pool: &PgPool, name: &str) -> Result<Option<Citizen>, CitizenError> {
+    let row = sqlx::query_as::<_, CitizenRow>(
+        "SELECT id, name, public_key, status, role, created_at, passport_issued, passport_expires
+         FROM citizens WHERE name = $1",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| CitizenError::DatabaseError(e.to_string()))?;
+
+    row.map(Citizen::try_from).transpose()
+}
+
+async fn get_citizen_by_id(pool: &PgPool, id: &str) -> Result<Option<Citizen>, CitizenError> {
+    let row = sqlx::query_as::<_, CitizenRow>(
+        "SELECT id, name, public_key, status, role, created_at, passport_issued, passport_expires
+         FROM citizens WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| CitizenError::DatabaseError(e.to_string()))?;
+
+    row.map(Citizen::try_from).transpose()
+}
+
+async fn citizen_name_taken(pool: &PgPool, name: &str) -> Result<bool, CitizenError> {
+    if get_citizen_by_name(pool, name).await?.is_some() {
+        return Ok(true);
+    }
+    let in_pending: bool = sqlx::query_scalar(
         r#"
-        CREATE TABLE IF NOT EXISTS citizens (
-            id TEXT PRIMARY KEY,
-            name TEXT UNIQUE NOT NULL,
-            public_key TEXT NOT NULL,
-            status TEXT NOT NULL,
-            role TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            passport_issued BOOLEAN DEFAULT FALSE,
-            passport_expires INTEGER
-        );
-
-        CREATE TABLE IF NOT EXISTS passports (
-            id TEXT PRIMARY KEY,
-            citizen_id TEXT NOT NULL,
-            issued_at INTEGER NOT NULL,
-            expires_at INTEGER NOT NULL,
-            is_valid BOOLEAN DEFAULT TRUE,
-            FOREIGN KEY (citizen_id) REFERENCES citizens(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_citizens_name ON citizens(name);
-        CREATE INDEX IF NOT EXISTS idx_citizens_status ON citizens(status);
-        CREATE INDEX IF NOT EXISTS idx_passports_citizen_id ON passports(citizen_id);
+        SELECT EXISTS(
+            SELECT 1 FROM pending_events
+            WHERE event_data::jsonb->>'event_type' = 'CitizenAdded'
+              AND event_data::jsonb->'data'->>'citizen_name' = $1
+        )
         "#,
-    )?;
+    )
+    .bind(name)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| CitizenError::DatabaseError(e.to_string()))?;
+    Ok(in_pending)
+}
+
+async fn pending_event_for_citizen(
+    pool: &PgPool,
+    event_type: &str,
+    citizen_id: &str,
+) -> Result<bool, CitizenError> {
+    let exists: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM pending_events
+            WHERE event_data::jsonb->>'event_type' = $1
+              AND event_data::jsonb->'data'->>'citizen_id' = $2
+        )
+        "#,
+    )
+    .bind(event_type)
+    .bind(citizen_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| CitizenError::DatabaseError(e.to_string()))?;
+    Ok(exists)
+}
+
+async fn get_valid_passport_id(pool: &PgPool, citizen_id: &str) -> Result<Option<String>, CitizenError> {
+    sqlx::query_scalar(
+        "SELECT id FROM passports WHERE citizen_id = $1 AND is_valid = TRUE ORDER BY issued_at DESC LIMIT 1",
+    )
+    .bind(citizen_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| CitizenError::DatabaseError(e.to_string()))
+}
+
+async fn submit_pending_event(
+    state: Arc<AppState>,
+    event: Event,
+) -> Result<(), (StatusCode, Json<ApiResponse>)> {
+    if let Err(e) = EventValidator::validate_event(&event, &state.db).await {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::error(e.message())),
+        ));
+    }
+
+    if let Err(e) = pending::insert(&state.db, &event).await {
+        return Err(CitizenError::DatabaseError(format!("Не удалось добавить событие: {}", e))
+            .to_response());
+    }
+
+    let state_gossip = state.clone();
+    let event_gossip = event.clone();
+    tokio::spawn(async move {
+        crate::gossip::push_pending_to_peers(&state_gossip, &event_gossip).await;
+    });
+
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        block_producer::try_create_block(state_clone).await;
+    });
+
     Ok(())
 }
 
-pub fn get_citizen_id_from_key(api_key: &str) -> Option<String> {
-    if api_key == crate::auth::master_key() {
-        return Some(crate::auth::MASTER_NAME.to_string());
-    }
-    None
-}
-
-// ============ HELPER FUNCTIONS ============
-
-fn get_citizen_by_name(conn: &Connection, name: &str) -> Result<Option<Citizen>, CitizenError> {
-    let mut stmt = conn
-        .prepare("SELECT id, name, public_key, status, role, created_at, passport_issued, passport_expires FROM citizens WHERE name = ?")?;
-
-    let mut rows = stmt.query(params![name])?;
-
-    if let Some(row) = rows.next()? {
-        let status_str: String = row.get(3)?;
-        let role_str: String = row.get(4)?;
-        
-        let status = CitizenStatus::from_str(&status_str)
-            .ok_or(CitizenError::InvalidStatus)?;
-        let role = Role::from_str(&role_str)
-            .ok_or(CitizenError::InvalidRole)?;
-
-        Ok(Some(Citizen {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            public_key: row.get(2)?,
-            status,
-            role,
-            created_at: row.get(5)?,
-            passport_issued: row.get(6)?,
-            passport_expires: row.get(7)?,
-        }))
-    } else {
-        Ok(None)
-    }
-}
-
-fn get_citizen_by_id(conn: &Connection, id: &str) -> Result<Option<Citizen>, CitizenError> {
-    let mut stmt = conn
-        .prepare("SELECT id, name, public_key, status, role, created_at, passport_issued, passport_expires FROM citizens WHERE id = ?")?;
-
-    let mut rows = stmt.query(params![id])?;
-
-    if let Some(row) = rows.next()? {
-        let status_str: String = row.get(3)?;
-        let role_str: String = row.get(4)?;
-        
-        let status = CitizenStatus::from_str(&status_str)
-            .ok_or(CitizenError::InvalidStatus)?;
-        let role = Role::from_str(&role_str)
-            .ok_or(CitizenError::InvalidRole)?;
-
-        Ok(Some(Citizen {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            public_key: row.get(2)?,
-            status,
-            role,
-            created_at: row.get(5)?,
-            passport_issued: row.get(6)?,
-            passport_expires: row.get(7)?,
-        }))
-    } else {
-        Ok(None)
-    }
-}
-
-// ============ API HANDLERS ============
-
 pub async fn register_citizen(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    Extension(auth): Extension<AuthContext>,
     Json(req): Json<RegisterCitizenRequest>,
 ) -> impl IntoResponse {
-    let api_key = auth.token();
-    let _ = match get_citizen_id_from_key(api_key) {
-        Some(id) => id,
-        None => return CitizenError::InsufficientPermissions.to_response(),
+    if auth.is_node {
+        return CitizenError::InsufficientPermissions.to_response();
+    }
+
+    if req.name.is_empty() || !req.name.chars().all(|c| c.is_ascii_alphabetic()) {
+        return CitizenError::InvalidCitizenName(
+            "Имя должно содержать только латинские буквы".to_string(),
+        )
+        .to_response();
+    }
+
+    let public_key = match crate::crypto::validate_public_key_hex(&req.public_key) {
+        Ok(key) => key,
+        Err(_) => return CitizenError::InvalidPublicKey.to_response(),
     };
 
-    let mut conn = state.db.lock().await;
-    
-    if let Ok(Some(_)) = get_citizen_by_name(&conn, &req.name) {
+    if citizen_name_taken(&state.db, &req.name).await.unwrap_or(false) {
         return CitizenError::CitizenAlreadyExists.to_response();
     }
 
@@ -381,189 +377,174 @@ pub async fn register_citizen(
         None => Role::Citizen,
     };
 
+    if role != Role::Citizen && !auth.can_assign_elevated_role() {
+        return CitizenError::InsufficientPermissions.to_response();
+    }
+
     let citizen_id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
-    let status = CitizenStatus::Active;
+    let birth_place = req
+        .birth_place
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "Quazar".to_string());
+    let event_id = format!("citizen_add_{}", citizen_id);
 
-    let result = conn.execute(
-        "INSERT INTO citizens (id, name, public_key, status, role, created_at, passport_issued) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        params![
-            citizen_id,
-            req.name,
-            req.public_key,
-            status.as_str(),
-            role.as_str(),
-            now,
-            false,
-        ],
+    let mut event = build_citizen_added_event(
+        &event_id,
+        &citizen_id,
+        &req.name,
+        &public_key,
+        &birth_place,
+        role.as_str(),
+        &auth.citizen_name,
+        now,
     );
+    event.hash = Some(compute_event_hash(&event));
+    event.signatures = vec![registration_signature(
+        &citizen_id,
+        &public_key,
+        event.hash.as_deref().unwrap_or(""),
+    )];
 
-    match result {
-        Ok(_) => {
-            if let Ok(Some(citizen)) = get_citizen_by_name(&conn, &req.name) {
-                let response = CitizenResponse::from(citizen);
-                (StatusCode::CREATED, Json(ApiResponse::success(response)))
-            } else {
-                CitizenError::DatabaseError("Не удалось получить созданного гражданина".to_string()).to_response()
-            }
-        }
-        Err(e) => CitizenError::DatabaseError(e.to_string()).to_response(),
+    if let Err(resp) = submit_pending_event(state.clone(), event).await {
+        return resp;
     }
+
+    (
+        StatusCode::ACCEPTED,
+        Json(ApiResponse::success(RegisterCitizenResponse {
+            id: citizen_id,
+            name: req.name,
+            public_key,
+            role: role.as_str().to_string(),
+            registration_status: "pending".to_string(),
+            event_id,
+            created_at: now,
+        })),
+    )
 }
 
 pub async fn list_citizens(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    let api_key = auth.token();
-    let _ = match get_citizen_id_from_key(api_key) {
-        Some(id) => id,
-        None => return CitizenError::InsufficientPermissions.to_response(),
-    };
+    if let Some(resp) = reject_node(&auth) {
+        return resp;
+    }
 
-    let mut conn = state.db.lock().await;
-    
-    let mut stmt = match conn.prepare("SELECT id, name, public_key, status, role, created_at, passport_issued, passport_expires FROM citizens ORDER BY created_at DESC") {
-        Ok(stmt) => stmt,
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
-
-    let rows = match stmt.query_map([], |row| {
-        let status_str: String = row.get(3)?;
-        let role_str: String = row.get(4)?;
-        
-        let status = CitizenStatus::from_str(&status_str)
-            .ok_or(rusqlite::Error::InvalidQuery)?;
-        let role = Role::from_str(&role_str)
-            .ok_or(rusqlite::Error::InvalidQuery)?;
-
-        Ok(Citizen {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            public_key: row.get(2)?,
-            status,
-            role,
-            created_at: row.get(5)?,
-            passport_issued: row.get(6)?,
-            passport_expires: row.get(7)?,
-        })
-    }) {
+    let rows = match sqlx::query_as::<_, CitizenRow>(
+        "SELECT id, name, public_key, status, role, created_at, passport_issued, passport_expires
+         FROM citizens ORDER BY created_at DESC",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
         Ok(rows) => rows,
         Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
     };
 
-    let citizens: Vec<Citizen> = rows
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let total = citizens.len();
-    let responses: Vec<CitizenResponse> = citizens.into_iter().map(Into::into).collect();
+    let mut citizens = Vec::new();
+    for row in rows {
+        match Citizen::try_from(row) {
+            Ok(c) => citizens.push(CitizenResponse::from(c)),
+            Err(e) => return e.to_response(),
+        }
+    }
 
     let response = CitizensListResponse {
-        citizens: responses,
-        total,
+        total: citizens.len(),
+        citizens,
     };
-
     (StatusCode::OK, Json(ApiResponse::success(response)))
 }
 
 pub async fn get_citizen(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let api_key = auth.token();
-    let requester = match get_citizen_id_from_key(api_key) {
-        Some(id) => id,
-        None => return CitizenError::InsufficientPermissions.to_response(),
-    };
+    if let Some(resp) = reject_node(&auth) {
+        return resp;
+    }
 
-    let mut conn = state.db.lock().await;
-    
-    let citizen = match get_citizen_by_id(&conn, &id) {
+    let citizen = match get_citizen_by_id(&state.db, &id).await {
         Ok(Some(c)) => c,
         Ok(None) => return CitizenError::CitizenNotFound.to_response(),
         Err(e) => return e.to_response(),
     };
 
-    let is_self = requester == citizen.name || requester == "successful";
-
-    if !is_self {
+    if !auth.is_master && !auth.authorize_citizen_ref(&state.db, &citizen.id).await {
         return CitizenError::InsufficientPermissions.to_response();
     }
 
-    let response = CitizenResponse::from(citizen);
-    (StatusCode::OK, Json(ApiResponse::success(response)))
+    (StatusCode::OK, Json(ApiResponse::success(CitizenResponse::from(citizen))))
 }
 
 pub async fn update_status(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
     Json(req): Json<UpdateStatusRequest>,
 ) -> impl IntoResponse {
-    let api_key = auth.token();
-    let requester = match get_citizen_id_from_key(api_key) {
-        Some(id) => id,
-        None => return CitizenError::InsufficientPermissions.to_response(),
-    };
-
-    // Только мастер-ключ может менять статус
-    if requester != "successful" {
+    if !auth.can_manage_citizens() {
         return CitizenError::InsufficientPermissions.to_response();
     }
-
-    let mut conn = state.db.lock().await;
 
     let status = match CitizenStatus::from_str(&req.status) {
         Some(s) => s,
         None => return CitizenError::InvalidStatus.to_response(),
     };
 
-    match get_citizen_by_id(&conn, &id) {
-        Ok(Some(_)) => {},
+    let citizen = match get_citizen_by_id(&state.db, &id).await {
+        Ok(Some(c)) => c,
         Ok(None) => return CitizenError::CitizenNotFound.to_response(),
         Err(e) => return e.to_response(),
     };
 
-    let result = conn.execute(
-        "UPDATE citizens SET status = ? WHERE id = ?",
-        params![status.as_str(), id],
+    if citizen.status == status {
+        return (
+            StatusCode::OK,
+            Json(ApiResponse::success(CitizenResponse::from(citizen))),
+        );
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let event_id = format!("citizen_status_{}_{}", citizen.id, now);
+    let event = build_signed_citizen_status_event(
+        &event_id,
+        &citizen.id,
+        &citizen.name,
+        status.as_str(),
+        &auth.citizen_name,
+        now,
     );
 
-    match result {
-        Ok(_) => {
-            if let Ok(Some(updated)) = get_citizen_by_id(&conn, &id) {
-                let response = CitizenResponse::from(updated);
-                (StatusCode::OK, Json(ApiResponse::success(response)))
-            } else {
-                CitizenError::DatabaseError("Не удалось получить обновленного гражданина".to_string()).to_response()
-            }
-        }
-        Err(e) => CitizenError::DatabaseError(e.to_string()).to_response(),
+    if let Err(resp) = submit_pending_event(state, event.clone()).await {
+        return resp;
     }
+
+    (
+        StatusCode::ACCEPTED,
+        Json(ApiResponse::success(PendingCitizenEventResponse {
+            citizen_id: citizen.id,
+            event_id: event.event_id,
+            event_type: event.event_type,
+            status: "pending".to_string(),
+        })),
+    )
 }
 
 pub async fn issue_passport(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
     Json(req): Json<IssuePassportRequest>,
 ) -> impl IntoResponse {
-    let api_key = auth.token();
-    let requester = match get_citizen_id_from_key(api_key) {
-        Some(id) => id,
-        None => return CitizenError::InsufficientPermissions.to_response(),
-    };
-
-    // Только мастер-ключ может выдавать паспорта
-    if requester != "successful" {
+    if !auth.can_manage_citizens() {
         return CitizenError::InsufficientPermissions.to_response();
     }
 
-    let mut conn = state.db.lock().await;
-
-    let citizen = match get_citizen_by_id(&conn, &id) {
+    let citizen = match get_citizen_by_id(&state.db, &id).await {
         Ok(Some(c)) => c,
         Ok(None) => return CitizenError::CitizenNotFound.to_response(),
         Err(e) => return e.to_response(),
@@ -573,100 +554,57 @@ pub async fn issue_passport(
         return CitizenError::PassportAlreadyIssued.to_response();
     }
 
+    if pending_event_for_citizen(&state.db, "PassportIssued", &citizen.id)
+        .await
+        .unwrap_or(false)
+    {
+        return CitizenError::PassportAlreadyIssued.to_response();
+    }
+
     let passport_id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     let expires_in_days = req.expires_in_days.unwrap_or(365);
     let expires_at = now + (expires_in_days * 24 * 60 * 60) as i64;
+    let event_id = format!("passport_issue_{}", passport_id);
 
-    let tx = match conn.transaction() {
-        Ok(tx) => tx,
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
+    let event = build_signed_passport_issued_event(
+        &event_id,
+        &passport_id,
+        &citizen.id,
+        &citizen.name,
+        now,
+        expires_at,
+        &auth.citizen_name,
+        now,
+    );
 
-    match tx.execute(
-        "INSERT INTO passports (id, citizen_id, issued_at, expires_at, is_valid) VALUES (?, ?, ?, ?, ?)",
-        params![passport_id, citizen.id, now, expires_at, true],
-    ) {
-        Ok(_) => {},
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
-
-    match tx.execute(
-        "UPDATE citizens SET passport_issued = ?, passport_expires = ? WHERE id = ?",
-        params![true, expires_at, citizen.id],
-    ) {
-        Ok(_) => {},
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
-
-    match tx.commit() {
-        Ok(_) => {},
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
-
-    let mut stmt = match conn.prepare("SELECT id, citizen_id, issued_at, expires_at, is_valid FROM passports WHERE id = ?") {
-        Ok(stmt) => stmt,
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
-
-    let mut rows = match stmt.query(params![passport_id]) {
-        Ok(rows) => rows,
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
-
-    if let Some(row) = match rows.next() {
-        Ok(Some(row)) => Some(row),
-        Ok(None) => return CitizenError::DatabaseError("Паспорт не найден после создания".to_string()).to_response(),
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    } {
-        let passport = Passport {
-            id: match row.get(0) {
-                Ok(id) => id,
-                Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-            },
-            citizen_id: match row.get(1) {
-                Ok(id) => id,
-                Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-            },
-            issued_at: match row.get(2) {
-                Ok(ts) => ts,
-                Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-            },
-            expires_at: match row.get(3) {
-                Ok(ts) => ts,
-                Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-            },
-            is_valid: match row.get(4) {
-                Ok(valid) => valid,
-                Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-            },
-        };
-        let response = PassportResponse::from(passport);
-        (StatusCode::CREATED, Json(ApiResponse::success(response)))
-    } else {
-        CitizenError::DatabaseError("Не удалось получить созданный паспорт".to_string()).to_response()
+    if let Err(resp) = submit_pending_event(state, event.clone()).await {
+        return resp;
     }
+
+    (
+        StatusCode::ACCEPTED,
+        Json(ApiResponse::success(PendingPassportEventResponse {
+            citizen_id: citizen.id,
+            passport_id,
+            event_id: event.event_id,
+            event_type: event.event_type,
+            expires_at: Some(expires_at),
+            status: "pending".to_string(),
+        })),
+    )
 }
 
 pub async fn revoke_passport(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let api_key = auth.token();
-    let requester = match get_citizen_id_from_key(api_key) {
-        Some(id) => id,
-        None => return CitizenError::InsufficientPermissions.to_response(),
-    };
-
-    // Только мастер-ключ может аннулировать паспорта
-    if requester != "successful" {
+    if !auth.can_manage_citizens() {
         return CitizenError::InsufficientPermissions.to_response();
     }
 
-    let mut conn = state.db.lock().await;
-
-    let citizen = match get_citizen_by_id(&conn, &id) {
+    let citizen = match get_citizen_by_id(&state.db, &id).await {
         Ok(Some(c)) => c,
         Ok(None) => return CitizenError::CitizenNotFound.to_response(),
         Err(e) => return e.to_response(),
@@ -676,90 +614,83 @@ pub async fn revoke_passport(
         return CitizenError::PassportNotFound.to_response();
     }
 
-    let tx = match conn.transaction() {
-        Ok(tx) => tx,
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
+    if pending_event_for_citizen(&state.db, "PassportRevoked", &citizen.id)
+        .await
+        .unwrap_or(false)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(ApiResponse::error("Аннулирование паспорта уже ожидает подтверждения")),
+        );
+    }
+
+    let passport_id = match get_valid_passport_id(&state.db, &citizen.id).await {
+        Ok(Some(id)) => id,
+        Ok(None) => return CitizenError::PassportNotFound.to_response(),
+        Err(e) => return e.to_response(),
     };
 
-    match tx.execute(
-        "UPDATE passports SET is_valid = ? WHERE citizen_id = ?",
-        params![false, citizen.id],
-    ) {
-        Ok(_) => {},
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
+    let now = chrono::Utc::now().timestamp();
+    let event_id = format!("passport_revoke_{}", passport_id);
+    let event = build_signed_passport_revoked_event(
+        &event_id,
+        &passport_id,
+        &citizen.id,
+        &citizen.name,
+        &auth.citizen_name,
+        now,
+    );
 
-    match tx.execute(
-        "UPDATE citizens SET passport_issued = ?, passport_expires = ? WHERE id = ?",
-        params![false, None::<i64>, citizen.id],
-    ) {
-        Ok(_) => {},
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
+    if let Err(resp) = submit_pending_event(state, event.clone()).await {
+        return resp;
+    }
 
-    match tx.commit() {
-        Ok(_) => {},
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
-
-    (StatusCode::OK, Json(ApiResponse::success(json!({"message": "Паспорт аннулирован"}))))
+    (
+        StatusCode::ACCEPTED,
+        Json(ApiResponse::success(PendingPassportEventResponse {
+            citizen_id: citizen.id,
+            passport_id,
+            event_id: event.event_id,
+            event_type: event.event_type,
+            expires_at: None,
+            status: "pending".to_string(),
+        })),
+    )
 }
 
 pub async fn search_citizens(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    Extension(auth): Extension<AuthContext>,
     Query(query): Query<SearchQuery>,
 ) -> impl IntoResponse {
-    let api_key = auth.token();
-    let _ = match get_citizen_id_from_key(api_key) {
-        Some(id) => id,
-        None => return CitizenError::InsufficientPermissions.to_response(),
-    };
+    if let Some(resp) = reject_node(&auth) {
+        return resp;
+    }
 
-    let mut conn = state.db.lock().await;
-    
     let search_pattern = format!("%{}%", query.q);
-
-    let mut stmt = match conn.prepare("SELECT id, name, public_key, status, role, created_at, passport_issued, passport_expires FROM citizens WHERE name LIKE ? ORDER BY created_at DESC") {
-        Ok(stmt) => stmt,
-        Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
-    };
-
-    let rows = match stmt.query_map(params![search_pattern], |row| {
-        let status_str: String = row.get(3)?;
-        let role_str: String = row.get(4)?;
-        
-        let status = CitizenStatus::from_str(&status_str)
-            .ok_or(rusqlite::Error::InvalidQuery)?;
-        let role = Role::from_str(&role_str)
-            .ok_or(rusqlite::Error::InvalidQuery)?;
-
-        Ok(Citizen {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            public_key: row.get(2)?,
-            status,
-            role,
-            created_at: row.get(5)?,
-            passport_issued: row.get(6)?,
-            passport_expires: row.get(7)?,
-        })
-    }) {
+    let rows = match sqlx::query_as::<_, CitizenRow>(
+        "SELECT id, name, public_key, status, role, created_at, passport_issued, passport_expires
+         FROM citizens WHERE name LIKE $1 ORDER BY created_at DESC",
+    )
+    .bind(search_pattern)
+    .fetch_all(&state.db)
+    .await
+    {
         Ok(rows) => rows,
         Err(e) => return CitizenError::DatabaseError(e.to_string()).to_response(),
     };
 
-    let citizens: Vec<Citizen> = rows
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let total = citizens.len();
-    let responses: Vec<CitizenResponse> = citizens.into_iter().map(Into::into).collect();
+    let mut citizens = Vec::new();
+    for row in rows {
+        match Citizen::try_from(row) {
+            Ok(c) => citizens.push(CitizenResponse::from(c)),
+            Err(e) => return e.to_response(),
+        }
+    }
 
     let response = CitizensListResponse {
-        citizens: responses,
-        total,
+        total: citizens.len(),
+        citizens,
     };
-
     (StatusCode::OK, Json(ApiResponse::success(response)))
 }

@@ -1,5 +1,43 @@
 use serde::{Serialize, Deserialize};
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Role {
+    Aiya,
+    Guardian,
+    Judge,
+    Citizen,
+}
+
+impl Role {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::Aiya => "Aiya",
+            Role::Guardian => "Guardian",
+            Role::Judge => "Judge",
+            Role::Citizen => "Citizen",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "Aiya" => Some(Role::Aiya),
+            "Guardian" => Some(Role::Guardian),
+            "Judge" => Some(Role::Judge),
+            "Citizen" => Some(Role::Citizen),
+            _ => None,
+        }
+    }
+
+    pub fn satisfies(&self, required: &Role) -> bool {
+        match required {
+            Role::Aiya => matches!(self, Role::Aiya),
+            Role::Guardian => matches!(self, Role::Aiya | Role::Guardian),
+            Role::Judge => matches!(self, Role::Aiya | Role::Guardian | Role::Judge),
+            Role::Citizen => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum QuazarEventType {
     SystemInit,
@@ -97,5 +135,25 @@ impl QuazarEventType {
             "PeerListUpdate" => Ok(QuazarEventType::PeerListUpdate),
             _ => Err(format!("Unknown event type: {}", s)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Role;
+
+    #[test]
+    fn role_from_str_and_as_str_roundtrip() {
+        for role in [Role::Aiya, Role::Guardian, Role::Judge, Role::Citizen] {
+            assert_eq!(Role::from_str(role.as_str()), Some(role.clone()));
+        }
+    }
+
+    #[test]
+    fn role_satisfies_hierarchy() {
+        assert!(Role::Aiya.satisfies(&Role::Guardian));
+        assert!(Role::Guardian.satisfies(&Role::Judge));
+        assert!(!Role::Citizen.satisfies(&Role::Guardian));
+        assert!(Role::Citizen.satisfies(&Role::Citizen));
     }
 }

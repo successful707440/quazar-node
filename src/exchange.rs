@@ -1,20 +1,18 @@
-// src/exchange.rs - Модуль биржи Quazar (упрощенная версия)
 use axum::{
-    extract::{Path, Query, State},
-    response::Json,
-    response::IntoResponse,
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
+    response::IntoResponse,
+    response::Json,
 };
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use rusqlite::{params, Connection, ToSql};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::auth::{Role, KeyStore};
+use crate::auth::AuthContext;
+use crate::response::ApiResponse;
 use crate::AppState;
-
-// ===== СТРУКТУРЫ ДАННЫХ =====
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum OfferStatus {
@@ -47,66 +45,41 @@ impl From<&str> for OfferStatus {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Offer {
     pub id: String,
     pub seller: String,
     pub service: String,
-    pub price: u64,
-    pub quantity: u64,
-    pub status: OfferStatus,
+    pub price: i64,
+    pub quantity: i64,
+    pub status: String,
     pub created_at: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum OrderStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "completed")]
-    Completed,
-    #[serde(rename = "cancelled")]
-    Cancelled,
-}
-
-impl OrderStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            OrderStatus::Pending => "pending",
-            OrderStatus::Completed => "completed",
-            OrderStatus::Cancelled => "cancelled",
-        }
+impl Offer {
+    fn into_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "seller": self.seller,
+            "service": self.service,
+            "price": self.price,
+            "quantity": self.quantity,
+            "status": self.status,
+            "created_at": self.created_at,
+        })
     }
 }
 
-impl From<&str> for OrderStatus {
-    fn from(s: &str) -> Self {
-        match s {
-            "pending" => OrderStatus::Pending,
-            "completed" => OrderStatus::Completed,
-            "cancelled" => OrderStatus::Cancelled,
-            _ => OrderStatus::Pending,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Order {
     pub id: String,
     pub buyer: String,
     pub offer_id: String,
-    pub quantity: u64,
-    pub total_price: u64,
-    pub status: OrderStatus,
+    pub quantity: i64,
+    pub total_price: i64,
+    pub status: String,
     pub created_at: i64,
 }
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Balance {
-    pub citizen_id: String,
-    pub amount: u64,
-}
-
-// ===== REQUEST STRUCTS =====
 
 #[derive(Debug, Deserialize)]
 pub struct CreateOfferRequest {
@@ -138,8 +111,6 @@ pub struct GetOrdersQuery {
     pub status: Option<String>,
 }
 
-// ===== ОШИБКИ =====
-
 #[derive(Debug)]
 pub enum ExchangeError {
     DatabaseError(String),
@@ -168,14 +139,11 @@ impl ExchangeError {
 impl IntoResponse for ExchangeError {
     fn into_response(self) -> axum::response::Response {
         let status = self.status_code();
-        let message = self.to_string();
-        
-        let body = serde_json::json!({
-            "status": "error",
-            "error": message,
-        });
-        
-        (status, Json(body)).into_response()
+        (
+            status,
+            Json(ApiResponse::error(self.to_string())),
+        )
+            .into_response()
     }
 }
 
@@ -197,100 +165,40 @@ impl std::error::Error for ExchangeError {}
 
 type ExchangeResult<T> = Result<T, ExchangeError>;
 
-// ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
+async fn get_balance(pool: &PgPool, citizen_id: &str) -> Result<u64, ExchangeError> {
+    let amount: Option<i64> = sqlx::query_scalar(
+        "SELECT amount FROM balances WHERE citizen_id = $1",
+    )
+    .bind(citizen_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
 
-pub fn init_exchange_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS offers (
-            id TEXT PRIMARY KEY,
-            seller TEXT NOT NULL,
-            service TEXT NOT NULL,
-            price INTEGER NOT NULL,
-            quantity INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            created_at INTEGER NOT NULL
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS orders (
-            id TEXT PRIMARY KEY,
-            buyer TEXT NOT NULL,
-            offer_id TEXT NOT NULL,
-            quantity INTEGER NOT NULL,
-            total_price INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            created_at INTEGER NOT NULL
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS balances (
-            citizen_id TEXT PRIMARY KEY,
-            amount INTEGER NOT NULL DEFAULT 0
-        )",
-        [],
-    )?;
-
-    Ok(())
-}
-
-pub fn get_balance(conn: &Connection, citizen_id: &str) -> Result<u64, ExchangeError> {
-    let result: Result<Option<u64>, _> = conn.query_row(
-        "SELECT amount FROM balances WHERE citizen_id = ?1",
-        [citizen_id],
-        |row| row.get(0),
-    ).map(Some)
-    .or_else(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => Ok(None),
-        _ => Err(ExchangeError::DatabaseError(e.to_string())),
-    });
-
-    match result {
-        Ok(Some(amount)) => Ok(amount),
-        Ok(None) => {
-            conn.execute(
-                "INSERT INTO balances (citizen_id, amount) VALUES (?1, 0)",
-                [citizen_id],
-            ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+    match amount {
+        Some(value) => Ok(value as u64),
+        None => {
+            sqlx::query("INSERT INTO balances (citizen_id, amount) VALUES ($1, 0)")
+                .bind(citizen_id)
+                .execute(pool)
+                .await
+                .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
             Ok(0)
         }
-        Err(e) => Err(e),
     }
 }
-
-pub fn update_balance(
-    conn: &Connection,
-    citizen_id: &str,
-    delta: i64,
-) -> Result<u64, ExchangeError> {
-    let current = get_balance(conn, citizen_id)?;
-    
-    if delta < 0 && (current as i64 + delta) < 0 {
-        return Err(ExchangeError::InsufficientBalance);
-    }
-    
-    let new_amount = (current as i64 + delta) as u64;
-    
-    conn.execute(
-        "UPDATE balances SET amount = ?1 WHERE citizen_id = ?2",
-        params![new_amount, citizen_id],
-    ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    Ok(new_amount)
-}
-
-// ===== API ЭНДПОИНТЫ (все используют только State) =====
 
 pub async fn create_offer(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
     Json(request): Json<CreateOfferRequest>,
-) -> ExchangeResult<Json<serde_json::Value>> {
-    // Временно используем hardcoded seller для теста
-    let seller = "successful".to_string();
-    
+) -> ExchangeResult<Json<ApiResponse>> {
+    if auth.is_node {
+        return Err(ExchangeError::Unauthorized(
+            "Node credentials cannot create offers".to_string(),
+        ));
+    }
+    let seller = auth.resolve_account_id(&state.db).await;
+
     if request.service.is_empty() {
         return Err(ExchangeError::BadRequest("Service name is required".to_string()));
     }
@@ -300,355 +208,356 @@ pub async fn create_offer(
     if request.quantity == 0 {
         return Err(ExchangeError::BadRequest("Quantity must be greater than 0".to_string()));
     }
-    
+
     let offer_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().timestamp();
-    
-    let db = state.db.lock().await;
-    
-    db.execute(
+
+    sqlx::query(
         "INSERT INTO offers (id, seller, service, price, quantity, status, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            offer_id,
-            seller,
-            request.service,
-            request.price,
-            request.quantity,
-            OfferStatus::Active.as_str(),
-            created_at,
-        ],
-    ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "data": {
-            "offer_id": offer_id,
-            "message": "Offer created successfully"
-        }
-    })))
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(&offer_id)
+    .bind(&seller)
+    .bind(&request.service)
+    .bind(request.price as i64)
+    .bind(request.quantity as i64)
+    .bind(OfferStatus::Active.as_str())
+    .bind(created_at)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(serde_json::json!({
+        "offer_id": offer_id,
+        "message": "Offer created successfully"
+    }))))
 }
 
 pub async fn get_offers(
     State(state): State<Arc<AppState>>,
     Query(query): Query<GetOffersQuery>,
-) -> ExchangeResult<Json<serde_json::Value>> {
-    let db = state.db.lock().await;
-    
-    let mut sql = "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE 1=1".to_string();
-    let mut params: Vec<Box<dyn ToSql>> = vec![];
-    
-    if let Some(status) = query.status {
-        sql.push_str(" AND status = ?");
-        params.push(Box::new(status));
+) -> ExchangeResult<Json<ApiResponse>> {
+    let offers = match (&query.status, &query.service) {
+        (Some(status), Some(service)) => {
+            let pattern = format!("%{}%", service);
+            sqlx::query_as::<_, Offer>(
+                "SELECT id, seller, service, price, quantity, status, created_at FROM offers
+                 WHERE status = $1 AND service LIKE $2 ORDER BY created_at DESC",
+            )
+            .bind(status)
+            .bind(pattern)
+            .fetch_all(&state.db)
+            .await
+        }
+        (Some(status), None) => {
+            sqlx::query_as::<_, Offer>(
+                "SELECT id, seller, service, price, quantity, status, created_at FROM offers
+                 WHERE status = $1 ORDER BY created_at DESC",
+            )
+            .bind(status)
+            .fetch_all(&state.db)
+            .await
+        }
+        (None, Some(service)) => {
+            let pattern = format!("%{}%", service);
+            sqlx::query_as::<_, Offer>(
+                "SELECT id, seller, service, price, quantity, status, created_at FROM offers
+                 WHERE service LIKE $1 ORDER BY created_at DESC",
+            )
+            .bind(pattern)
+            .fetch_all(&state.db)
+            .await
+        }
+        (None, None) => {
+            sqlx::query_as::<_, Offer>(
+                "SELECT id, seller, service, price, quantity, status, created_at FROM offers
+                 ORDER BY created_at DESC",
+            )
+            .fetch_all(&state.db)
+            .await
+        }
     }
-    
-    if let Some(service) = query.service {
-        sql.push_str(" AND service LIKE ?");
-        params.push(Box::new(format!("%{}%", service)));
-    }
-    
-    sql.push_str(" ORDER BY created_at DESC");
-    
-    let mut stmt = db.prepare(&sql).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    
-    let rows = stmt.query_map(&param_refs[..], |row| {
-        let status_str: String = row.get(5)?;
-        Ok(Offer {
-            id: row.get(0)?,
-            seller: row.get(1)?,
-            service: row.get(2)?,
-            price: row.get(3)?,
-            quantity: row.get(4)?,
-            status: OfferStatus::from(status_str.as_str()),
-            created_at: row.get(6)?,
-        })
-    }).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    let offers: Vec<Offer> = rows.filter_map(|row| row.ok()).collect();
-    
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "data": offers
-    })))
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    let data: Vec<_> = offers.into_iter().map(|o| o.into_json()).collect();
+
+    Ok(Json(ApiResponse::success(data)))
 }
 
 pub async fn get_offer_by_id(
     State(state): State<Arc<AppState>>,
     Path(offer_id): Path<String>,
-) -> ExchangeResult<Json<serde_json::Value>> {
-    let db = state.db.lock().await;
-    
-    let row = db.query_row(
-        "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE id = ?1",
-        [&offer_id],
-        |row| {
-            let status_str: String = row.get(5)?;
-            Ok(Offer {
-                id: row.get(0)?,
-                seller: row.get(1)?,
-                service: row.get(2)?,
-                price: row.get(3)?,
-                quantity: row.get(4)?,
-                status: OfferStatus::from(status_str.as_str()),
-                created_at: row.get(6)?,
-            })
-        },
-    ).map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => ExchangeError::NotFound(format!("Offer {} not found", offer_id)),
-        _ => ExchangeError::DatabaseError(e.to_string()),
-    })?;
-    
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "data": row
-    })))
+) -> ExchangeResult<Json<ApiResponse>> {
+    let offer = sqlx::query_as::<_, Offer>(
+        "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE id = $1",
+    )
+    .bind(&offer_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?
+    .ok_or_else(|| ExchangeError::NotFound(format!("Offer {} not found", offer_id)))?;
+
+    Ok(Json(ApiResponse::success(offer.into_json())))
 }
 
 pub async fn cancel_offer(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
     Path(offer_id): Path<String>,
-) -> ExchangeResult<Json<serde_json::Value>> {
-    let db = state.db.lock().await;
-    
-    let offer: Offer = db.query_row(
-        "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE id = ?1",
-        [&offer_id],
-        |row| {
-            let status_str: String = row.get(5)?;
-            Ok(Offer {
-                id: row.get(0)?,
-                seller: row.get(1)?,
-                service: row.get(2)?,
-                price: row.get(3)?,
-                quantity: row.get(4)?,
-                status: OfferStatus::from(status_str.as_str()),
-                created_at: row.get(6)?,
-            })
-        },
-    ).map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => ExchangeError::NotFound(format!("Offer {} not found", offer_id)),
-        _ => ExchangeError::DatabaseError(e.to_string()),
-    })?;
-    
-    // Проверяем права (для теста разрешаем все)
-    // В реальном проекте нужно проверять seller == current_user
-    
-    if matches!(offer.status, OfferStatus::Filled) {
-        return Err(ExchangeError::InvalidStatus("Cannot cancel a filled offer".to_string()));
+) -> ExchangeResult<Json<ApiResponse>> {
+    let offer = sqlx::query_as::<_, Offer>(
+        "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE id = $1",
+    )
+    .bind(&offer_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?
+    .ok_or_else(|| ExchangeError::NotFound(format!("Offer {} not found", offer_id)))?;
+
+    let account_id = auth.resolve_account_id(&state.db).await;
+    if !auth.is_master && offer.seller != account_id && offer.seller != auth.citizen_name {
+        return Err(ExchangeError::Unauthorized(
+            "Only the seller can cancel this offer".to_string(),
+        ));
     }
-    
-    db.execute(
-        "UPDATE offers SET status = ?1 WHERE id = ?2",
-        params![OfferStatus::Cancelled.as_str(), offer_id],
-    ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "data": {
-            "message": "Offer cancelled successfully"
-        }
-    })))
+
+    if offer.status == OfferStatus::Filled.as_str() {
+        return Err(ExchangeError::InvalidStatus(
+            "Cannot cancel a filled offer".to_string(),
+        ));
+    }
+
+    sqlx::query("UPDATE offers SET status = $1 WHERE id = $2")
+        .bind(OfferStatus::Cancelled.as_str())
+        .bind(&offer_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(serde_json::json!({
+        "message": "Offer cancelled successfully"
+    }))))
 }
 
 pub async fn create_order(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
     Json(request): Json<CreateOrderRequest>,
-) -> ExchangeResult<Json<serde_json::Value>> {
-    let buyer = "successful".to_string();
-    
+) -> ExchangeResult<Json<ApiResponse>> {
+    if auth.is_node {
+        return Err(ExchangeError::Unauthorized(
+            "Node credentials cannot create orders".to_string(),
+        ));
+    }
+    let buyer = auth.resolve_account_id(&state.db).await;
+
     if request.quantity == 0 {
         return Err(ExchangeError::BadRequest("Quantity must be greater than 0".to_string()));
     }
-    
-    let mut db = state.db.lock().await;
-    
-    let offer: Offer = db.query_row(
-        "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE id = ?1 AND status = 'active'",
-        [&request.offer_id],
-        |row| {
-            let status_str: String = row.get(5)?;
-            Ok(Offer {
-                id: row.get(0)?,
-                seller: row.get(1)?,
-                service: row.get(2)?,
-                price: row.get(3)?,
-                quantity: row.get(4)?,
-                status: OfferStatus::from(status_str.as_str()),
-                created_at: row.get(6)?,
-            })
-        },
-    ).map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => ExchangeError::NotFound(format!("Active offer {} not found", request.offer_id)),
-        _ => ExchangeError::DatabaseError(e.to_string()),
+
+    let offer = sqlx::query_as::<_, Offer>(
+        "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE id = $1 AND status = 'active'",
+    )
+    .bind(&request.offer_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?
+    .ok_or_else(|| {
+        ExchangeError::NotFound(format!("Active offer {} not found", request.offer_id))
     })?;
-    
+
     if offer.seller == buyer {
         return Err(ExchangeError::BadRequest("Cannot buy your own offer".to_string()));
     }
-    
-    if request.quantity > offer.quantity {
+    if request.quantity as i64 > offer.quantity {
         return Err(ExchangeError::InsufficientQuantity);
     }
-    
-    let total_price = request.quantity * offer.price;
-    
-    let buyer_balance = get_balance(&db, &buyer)?;
-    if buyer_balance < total_price {
+
+    let total_price = (request.quantity as i64) * offer.price;
+    let buyer_balance = get_balance(&state.db, &buyer).await?;
+    if buyer_balance < total_price as u64 {
         return Err(ExchangeError::InsufficientBalance);
     }
-    
+
     let order_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().timestamp();
-    
-    let tx = db.transaction().map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    tx.execute(
-        "UPDATE balances SET amount = amount - ?1 WHERE citizen_id = ?2",
-        params![total_price, buyer],
-    ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    tx.execute(
-        "UPDATE balances SET amount = amount + ?1 WHERE citizen_id = ?2",
-        params![total_price, offer.seller],
-    ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    let new_quantity = offer.quantity - request.quantity;
+    let new_quantity = offer.quantity - request.quantity as i64;
     let new_status = if new_quantity == 0 {
         OfferStatus::Filled.as_str()
     } else {
         OfferStatus::Active.as_str()
     };
-    
-    tx.execute(
-        "UPDATE offers SET quantity = ?1, status = ?2 WHERE id = ?3",
-        params![new_quantity, new_status, offer.id],
-    ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    tx.execute(
+
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    sqlx::query("UPDATE balances SET amount = amount - $1 WHERE citizen_id = $2")
+        .bind(total_price)
+        .bind(&buyer)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    sqlx::query("UPDATE balances SET amount = amount + $1 WHERE citizen_id = $2")
+        .bind(total_price)
+        .bind(&offer.seller)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    sqlx::query("UPDATE offers SET quantity = $1, status = $2 WHERE id = $3")
+        .bind(new_quantity)
+        .bind(new_status)
+        .bind(&offer.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    sqlx::query(
         "INSERT INTO orders (id, buyer, offer_id, quantity, total_price, status, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            order_id,
-            buyer,
-            offer.id,
-            request.quantity,
-            total_price,
-            OrderStatus::Completed.as_str(),
-            created_at,
-        ],
-    ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    tx.commit().map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "data": {
-            "order_id": order_id,
-            "message": format!("Order created successfully. Total: {} QUAZAR", total_price)
-        }
-    })))
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(&order_id)
+    .bind(&buyer)
+    .bind(&offer.id)
+    .bind(request.quantity as i64)
+    .bind(total_price)
+    .bind("completed")
+    .bind(created_at)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(serde_json::json!({
+        "order_id": order_id,
+        "message": format!("Order created successfully. Total: {} QUAZAR", total_price)
+    }))))
 }
 
 pub async fn get_orders(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
     Query(query): Query<GetOrdersQuery>,
-) -> ExchangeResult<Json<serde_json::Value>> {
-    let citizen_id = "successful".to_string();
-    
-    let db = state.db.lock().await;
-    
-    let mut sql = "SELECT id, buyer, offer_id, quantity, total_price, status, created_at FROM orders WHERE buyer = ?1".to_string();
-    let mut params: Vec<Box<dyn ToSql>> = vec![Box::new(citizen_id)];
-    
-    if let Some(status) = query.status {
-        sql.push_str(" AND status = ?");
-        params.push(Box::new(status));
+) -> ExchangeResult<Json<ApiResponse>> {
+    if auth.is_node {
+        return Err(ExchangeError::Unauthorized(
+            "Node credentials cannot list orders".to_string(),
+        ));
     }
-    
-    sql.push_str(" ORDER BY created_at DESC");
-    
-    let mut stmt = db.prepare(&sql).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    
-    let rows = stmt.query_map(&param_refs[..], |row| {
-        let status_str: String = row.get(5)?;
-        Ok(Order {
-            id: row.get(0)?,
-            buyer: row.get(1)?,
-            offer_id: row.get(2)?,
-            quantity: row.get(3)?,
-            total_price: row.get(4)?,
-            status: OrderStatus::from(status_str.as_str()),
-            created_at: row.get(6)?,
-        })
-    }).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    let orders: Vec<Order> = rows.filter_map(|row| row.ok()).collect();
-    
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "data": orders
-    })))
+    let citizen_id = auth.resolve_account_id(&state.db).await;
+
+    let orders = if let Some(status) = query.status {
+        sqlx::query_as::<_, Order>(
+            "SELECT id, buyer, offer_id, quantity, total_price, status, created_at FROM orders
+             WHERE buyer = $1 AND status = $2 ORDER BY created_at DESC",
+        )
+        .bind(&citizen_id)
+        .bind(status)
+        .fetch_all(&state.db)
+        .await
+    } else {
+        sqlx::query_as::<_, Order>(
+            "SELECT id, buyer, offer_id, quantity, total_price, status, created_at FROM orders
+             WHERE buyer = $1 ORDER BY created_at DESC",
+        )
+        .bind(&citizen_id)
+        .fetch_all(&state.db)
+        .await
+    }
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(orders)))
 }
 
 pub async fn get_balance_handler(
     State(state): State<Arc<AppState>>,
-) -> ExchangeResult<Json<serde_json::Value>> {
-    let citizen_id = "successful".to_string();
-    
-    let db = state.db.lock().await;
-    let balance = get_balance(&db, &citizen_id)?;
-    
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "data": {
-            "citizen_id": citizen_id,
-            "amount": balance
-        }
-    })))
+    Extension(auth): Extension<AuthContext>,
+) -> ExchangeResult<Json<ApiResponse>> {
+    if auth.is_node {
+        return Err(ExchangeError::Unauthorized(
+            "Node credentials cannot read balance".to_string(),
+        ));
+    }
+    let citizen_id = auth.resolve_account_id(&state.db).await;
+    let balance = get_balance(&state.db, &citizen_id).await?;
+
+    Ok(Json(ApiResponse::success(serde_json::json!({
+        "citizen_id": citizen_id,
+        "amount": balance
+    }))))
+}
+
+async fn resolve_citizen_id(pool: &PgPool, citizen_ref: &str) -> Result<String, ExchangeError> {
+    if let Some(id) = sqlx::query_scalar("SELECT id FROM citizens WHERE id = $1")
+        .bind(citizen_ref)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?
+    {
+        return Ok(id);
+    }
+    if let Some(id) = sqlx::query_scalar("SELECT id FROM citizens WHERE name = $1")
+        .bind(citizen_ref)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?
+    {
+        return Ok(id);
+    }
+    Err(ExchangeError::NotFound(format!("Citizen not found: {}", citizen_ref)))
 }
 
 pub async fn add_balance(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
     Json(request): Json<AddBalanceRequest>,
-) -> ExchangeResult<Json<serde_json::Value>> {
-    // Только для теста - разрешаем добавлять баланс без проверки
+) -> ExchangeResult<Json<ApiResponse>> {
+    if !auth.can_add_balance() {
+        return Err(ExchangeError::Unauthorized(
+            "Only Aiya can add balance".to_string(),
+        ));
+    }
     if request.amount == 0 {
         return Err(ExchangeError::BadRequest("Amount must be greater than 0".to_string()));
     }
-    
-    let db = state.db.lock().await;
-    
-    let exists: bool = db.query_row(
-        "SELECT COUNT(*) FROM balances WHERE citizen_id = ?1",
-        [&request.citizen_id],
-        |row| row.get(0),
-    ).unwrap_or(0) > 0;
-    
+
+    let citizen_id = resolve_citizen_id(&state.db, &request.citizen_id).await?;
+
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM balances WHERE citizen_id = $1)",
+    )
+    .bind(&citizen_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
     if !exists {
-        db.execute(
-            "INSERT INTO balances (citizen_id, amount) VALUES (?1, 0)",
-            [&request.citizen_id],
-        ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+        sqlx::query("INSERT INTO balances (citizen_id, amount) VALUES ($1, 0)")
+            .bind(&citizen_id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
     }
-    
-    db.execute(
-        "UPDATE balances SET amount = amount + ?1 WHERE citizen_id = ?2",
-        params![request.amount, request.citizen_id],
-    ).map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
-    
-    let new_balance = get_balance(&db, &request.citizen_id)?;
-    
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "data": {
-            "citizen_id": request.citizen_id,
-            "added": request.amount,
-            "new_balance": new_balance
-        }
-    })))
+
+    sqlx::query("UPDATE balances SET amount = amount + $1 WHERE citizen_id = $2")
+        .bind(request.amount as i64)
+        .bind(&citizen_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    let new_balance = get_balance(&state.db, &citizen_id).await?;
+
+    Ok(Json(ApiResponse::success(serde_json::json!({
+        "citizen_id": citizen_id,
+        "added": request.amount,
+        "new_balance": new_balance
+    }))))
 }

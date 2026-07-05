@@ -3,4 +3,6 @@
 *.pid
 *.log
 .env
-docker-compose.yml
+*.backup
+*.save
+.cursorrules

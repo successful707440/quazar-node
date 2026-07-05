@@ -1,25 +1,23 @@
 [package]
 name = "quazar_registry"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 
 [dependencies]
-axum-extra = { version = "0.9", features = ["typed-header"] }
-dashmap = "5.5"
-governor = "0.6"
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.31", features = ["bundled"] }
-chrono = "0.4"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }
+chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
-hex = "0.4"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.11", features = ["json"] }
-thiserror = "1"
-rand = "0.8"
 tower = { version = "0.4", features = ["limit"] }
 tower-http = { version = "0.7", features = ["auth", "limit", "trace", "cors", "compression-gzip"] }
-uuid = { version = "1", features = ["v4"] }  # <-- ДОБАВЬТЕ ЭТУ СТРОКУ
+uuid = { version = "1", features = ["v4"] }
+dotenvy = "0.15"
+governor = "0.6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hex = "0.4"

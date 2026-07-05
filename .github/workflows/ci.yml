@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: quazar
+          POSTGRES_PASSWORD: quazar
+          POSTGRES_DB: quazar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U quazar -d quazar"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://quazar:quazar@localhost:5432/quazar
+      QUAZAR_MASTER_KEY: QUAZAR_MASTER_KEY_CI
+      QUAZAR_NODE_SECRET: QUAZAR_NODE_SECRET_CI
+      QUAZAR_REG_SECRET: QUAZAR_REG_SECRET_CI
+      QUAZAR_INIT_TEST_KEYS: "false"
+      QUAZAR_PORT: "8080"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo check
+        run: cargo check --locked
+
+      - name: cargo build
+        run: cargo build --locked
+
+      - name: cargo test
+        run: cargo test --locked
+
+      - name: smoke test
+        run: bash scripts/smoke.sh

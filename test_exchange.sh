@@ -3,8 +3,16 @@
 echo "=== Тестирование модуля биржи Quazar ==="
 echo
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/.env"
+  set +a
+fi
+
 BASE_URL="http://localhost:8080"
-API_KEY="QUAZAR_MASTER_KEY_2026"
+API_KEY="${QUAZAR_MASTER_KEY:?QUAZAR_MASTER_KEY not set — add it to .env}"
 
 echo "1. Добавляем баланс для пользователя test_citizen (Aiya)"
 curl -s -X POST "$BASE_URL/exchange/balance/add" \
