@@ -31,7 +31,7 @@ mod nodes;
 mod sync;
 mod exchange;
 use types::QuazarEventType;
-use auth::{KeyStore, Role, check_access};
+use auth::{KeyStore, Role, check_access, init_master_key, master_key};
 use validator::EventValidator;
 use nodes::{NodeRegistry, Node, NodeStatus};
 use sync::SyncManager;
@@ -471,7 +471,7 @@ citizen::init_citizen_tables(&conn)?;
 }
 
 async fn background_sync(state: Arc<AppState>) {
-    let mut interval = time::interval(Duration::from_secs(30));
+    let mut interval = time::interval(Duration::from_secs(300));
     let client = reqwest::Client::new();
     
     loop {
@@ -569,7 +569,7 @@ async fn auth_middleware(
         })
         .unwrap_or_default();
     
-    if api_key == "QUAZAR_MASTER_KEY_2026" {
+    if api_key == master_key() {
         req.extensions_mut().insert("successful".to_string());
         return next.run(req).await;
     }
@@ -600,6 +600,9 @@ async fn auth_middleware(
 
 #[tokio::main]
 async fn main() {
+    let _ = dotenvy::dotenv();
+    init_master_key();
+
     let db_path = std::env::var("QUAZAR_DB_PATH").unwrap_or_else(|_| "/data/quazar.db".to_string());
     let node_id = std::env::var("QUAZAR_NODE_ID").unwrap_or_else(|_| "QZ-NODE".to_string());
     let node_url = std::env::var("QUAZAR_NODE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());

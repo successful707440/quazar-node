@@ -1,5 +1,18 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use sha2::{Sha256, Digest};
+
+static MASTER_KEY: OnceLock<String> = OnceLock::new();
+
+pub fn init_master_key() {
+    let key = std::env::var("QUAZAR_MASTER_KEY")
+        .expect("QUAZAR_MASTER_KEY must be set (e.g. in .env)");
+    MASTER_KEY.set(key).expect("init_master_key called twice");
+}
+
+pub fn master_key() -> &'static str {
+    MASTER_KEY.get().expect("Master key not initialized")
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Role {
@@ -80,7 +93,7 @@ impl KeyStore {
     }
 
     pub fn is_master_key(&self, key: &str) -> bool {
-        key == "QUAZAR_MASTER_KEY_2026"
+        key == master_key()
     }
 }
 
@@ -99,6 +112,5 @@ pub fn generate_api_key(citizen_name: &str, seed: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub const MASTER_KEY: &str = "QUAZAR_MASTER_KEY_2026";
 pub const MASTER_ROLE: Role = Role::Aiya;
 pub const MASTER_NAME: &str = "successful";

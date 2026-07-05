@@ -286,8 +286,8 @@ pub fn init_citizen_tables(conn: &Connection) -> SqliteResult<()> {
 }
 
 pub fn get_citizen_id_from_key(api_key: &str) -> Option<String> {
-    if api_key == "QUAZAR_MASTER_KEY_2026" {
-        return Some("successful".to_string());
+    if api_key == crate::auth::master_key() {
+        return Some(crate::auth::MASTER_NAME.to_string());
     }
     None
 }
