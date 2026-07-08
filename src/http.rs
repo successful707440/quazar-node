@@ -226,6 +226,7 @@ pub async fn auth_middleware(
                 || path == "/keys/internal/export")
             || *method == Method::POST
                 && (path == "/events/gossip"
+                    || path == "/chat/gossip"
                     || path == "/keys/internal/upsert"
                     || path == "/keys/internal/revoke");
         if node_allowed {
@@ -234,7 +235,7 @@ pub async fn auth_middleware(
             return next.run(req).await;
         }
         tracing::warn!(path = %path, method = %method, "node secret rejected for route");
-        return response::forbidden("Node secret valid only for GET /events, GET /blocks, GET /keys/internal/export and POST /events/gossip, /keys/internal/*");
+        return response::forbidden("Node secret valid only for GET /events, GET /blocks, GET /keys/internal/export and POST /events/gossip, /chat/gossip, /keys/internal/*");
     }
 
     let key_data = KeyStore::validate_key(&state.db, &api_key)

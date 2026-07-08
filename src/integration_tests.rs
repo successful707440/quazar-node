@@ -667,6 +667,75 @@ async fn chat_send_and_list_messages() {
 }
 
 #[tokio::test]
+async fn chat_gossip_insert_is_idempotent() {
+    use std::sync::Arc;
+
+    use crate::chat::{insert_gossip_message, ChatMessageRow, GossipInsertResult};
+    use crate::AppState;
+    use crate::gossip;
+    use crate::nodes::NodeRegistry;
+
+    ensure_test_auth_secrets();
+
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip chat_gossip_insert_is_idempotent: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool).await.expect("migrations");
+
+    let n = uuid::Uuid::new_v4().simple().to_string();
+    let citizen_id = format!("gossip-chat-{n}");
+    let citizen_name = format!("gossipuser{n}");
+
+    let event = build_citizen_added_event(
+        &format!("citizen_add_{citizen_id}"),
+        &citizen_id,
+        &citizen_name,
+        "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "GossipCity",
+        "Citizen",
+        "system",
+        1_700_004_000,
+    );
+    let mut tx = pool.begin().await.expect("tx");
+    confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
+    tx.commit().await.expect("commit");
+
+    let message = ChatMessageRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        citizen_id: citizen_id.clone(),
+        citizen_name: citizen_name.clone(),
+        content: "gossip test".to_string(),
+        created_at: chrono::Utc::now(),
+    };
+
+    assert_eq!(
+        insert_gossip_message(&pool, &message).await.unwrap(),
+        GossipInsertResult::Inserted
+    );
+    assert_eq!(
+        insert_gossip_message(&pool, &message).await.unwrap(),
+        GossipInsertResult::AlreadyExists
+    );
+
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        node_registry: Arc::new(NodeRegistry::new(pool.clone())),
+        node_id: "TEST-NODE".to_string(),
+    });
+
+    let resp = gossip::receive_gossip_chat_message(&state, message.clone())
+        .await
+        .expect("receive gossip");
+    assert_eq!(resp.status, "success");
+    let data = resp.data.as_ref().expect("data");
+    assert_eq!(
+        data.get("message").and_then(|v| v.as_str()),
+        Some("Already exists, skipped")
+    );
+}
+
+#[tokio::test]
 async fn initiative_propose_and_vote_flow() {
     use std::sync::Arc;
 

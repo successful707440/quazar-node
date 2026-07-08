@@ -30,7 +30,7 @@ pub struct ListMessagesQuery {
     pub before: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ChatMessageRow {
     pub id: String,
     pub citizen_id: String,
@@ -65,6 +65,37 @@ impl ChatError {
             ChatError::Database(m) => (StatusCode::INTERNAL_SERVER_ERROR, m.clone()),
         };
         (status, Json(ApiResponse::error(message)))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GossipInsertResult {
+    Inserted,
+    AlreadyExists,
+}
+
+pub async fn insert_gossip_message(
+    pool: &PgPool,
+    message: &ChatMessageRow,
+) -> Result<GossipInsertResult, sqlx::Error> {
+    let result = sqlx::query(
+        "INSERT INTO chat_messages (id, citizen_id, citizen_name, content, created_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(&message.id)
+    .bind(&message.citizen_id)
+    .bind(&message.citizen_name)
+    .bind(&message.content)
+    .bind(message.created_at)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() > 0 {
+        tracing::debug!(message_id = %message.id, "chat gossip message inserted");
+        Ok(GossipInsertResult::Inserted)
+    } else {
+        Ok(GossipInsertResult::AlreadyExists)
     }
 }
 
@@ -143,13 +174,21 @@ pub async fn send_message(
 
     tracing::info!(citizen = %citizen_name, message_id = %id, "chat message sent");
 
-    Ok(ChatMessageRow {
+    let row = ChatMessageRow {
         id,
         citizen_id,
         citizen_name,
         content,
         created_at: now,
-    })
+    };
+
+    let state_gossip = state.clone();
+    let row_gossip = row.clone();
+    tokio::spawn(async move {
+        crate::gossip::push_chat_message_to_peers(&state_gossip, &row_gossip).await;
+    });
+
+    Ok(row)
 }
 
 pub async fn list_messages(
@@ -241,6 +280,16 @@ pub async fn send_message_handler(
     match send_message(state, &auth, req).await {
         Ok(row) => (StatusCode::CREATED, Json(ApiResponse::success(row))).into_response(),
         Err(e) => e.to_response().into_response(),
+    }
+}
+
+pub async fn gossip_chat_message_handler(
+    State(state): State<Arc<AppState>>,
+    Json(message): Json<ChatMessageRow>,
+) -> impl IntoResponse {
+    match crate::gossip::receive_gossip_chat_message(&state, message).await {
+        Ok(resp) => Json(resp).into_response(),
+        Err(msg) => response::bad_request(msg),
     }
 }
 

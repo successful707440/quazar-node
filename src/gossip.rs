@@ -4,6 +4,7 @@ use std::time::Duration;
 use reqwest::Client;
 
 use crate::auth::node_secret;
+use crate::chat::{self, ChatMessageRow};
 use crate::models::Event;
 use crate::nodes::NodeStatus;
 use crate::pending;
@@ -106,4 +107,68 @@ pub async fn receive_gossip_event(
         "event_id": event.event_id,
         "message": "Gossip event accepted"
     })))
+}
+
+pub async fn push_chat_message_to_peers(state: &Arc<AppState>, message: &ChatMessageRow) {
+    let peers = match state.node_registry.get_all_nodes().await {
+        Ok(peers) => peers,
+        Err(e) => {
+            tracing::warn!(error = %e, "chat gossip: failed to load peers");
+            return;
+        }
+    };
+
+    let client = Client::new();
+    let my_id = state.node_id.clone();
+
+    for peer in peers {
+        if peer.id == my_id || peer.status != NodeStatus::Alive {
+            continue;
+        }
+        let url = format!("{}/chat/gossip", peer.url.trim_end_matches('/'));
+        let message = message.clone();
+        let client = client.clone();
+        tokio::spawn(async move {
+            match client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", node_secret()))
+                .json(&message)
+                .timeout(Duration::from_secs(3))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::debug!(peer_url = %url, message_id = %message.id, "chat gossip push ok");
+                }
+                Ok(resp) => {
+                    tracing::warn!(
+                        peer_url = %url,
+                        message_id = %message.id,
+                        status = %resp.status(),
+                        "chat gossip push rejected"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(peer_url = %url, message_id = %message.id, error = %e, "chat gossip push failed");
+                }
+            }
+        });
+    }
+}
+
+pub async fn receive_gossip_chat_message(
+    state: &Arc<AppState>,
+    message: ChatMessageRow,
+) -> Result<ApiResponse, String> {
+    match chat::insert_gossip_message(&state.db, &message).await {
+        Ok(chat::GossipInsertResult::Inserted) => Ok(ApiResponse::success(serde_json::json!({
+            "id": message.id,
+            "message": "Chat message accepted"
+        }))),
+        Ok(chat::GossipInsertResult::AlreadyExists) => Ok(ApiResponse::success(serde_json::json!({
+            "id": message.id,
+            "message": "Already exists, skipped"
+        }))),
+        Err(e) => Err(format!("Failed to store gossip chat message: {}", e)),
+    }
 }

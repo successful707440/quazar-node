@@ -45,7 +45,7 @@ use citizen::*;
 use candidacy::{
     appoint_handler, get_candidacy_handler, list_candidacies_handler, nominate_handler, vote_handler,
 };
-use chat::{list_messages_handler, send_message_handler};
+use chat::{gossip_chat_message_handler, list_messages_handler, send_message_handler};
 use initiative::{
     get_initiative_handler, list_initiatives_handler, propose_handler as propose_initiative_handler,
     vote_handler as vote_initiative_handler,
@@ -176,6 +176,7 @@ async fn main() {
         .route("/blocks", get(handlers::get_blocks))
         .route("/events", get(handlers::get_events))
         .route("/events/gossip", post(handlers::gossip_event))
+        .route("/chat/gossip", post(gossip_chat_message_handler))
         .route("/event", post(handlers::add_event))
         .route("/nodes", get(handlers::get_nodes))
         .route("/peers", post(handlers::add_peer))
