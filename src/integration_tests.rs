@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Once;
 use std::time::Duration;
 
 use sqlx::{PgPool, Postgres, Transaction};
@@ -11,6 +12,25 @@ use crate::db;
 use crate::models::Event;
 use crate::pending;
 use crate::projection::apply_event_projections_in_tx;
+
+static TEST_AUTH_INIT: Once = Once::new();
+
+fn ensure_test_auth_secrets() {
+    TEST_AUTH_INIT.call_once(|| {
+        if std::env::var("QUAZAR_MASTER_KEY").is_err() {
+            std::env::set_var("QUAZAR_MASTER_KEY", "integration-test-master");
+        }
+        if std::env::var("QUAZAR_NODE_SECRET").is_err() {
+            std::env::set_var("QUAZAR_NODE_SECRET", "integration-test-node");
+        }
+        if std::env::var("QUAZAR_REG_SECRET").is_err() {
+            std::env::set_var("QUAZAR_REG_SECRET", "integration-test-reg");
+        }
+        crate::auth::init_master_key();
+        crate::auth::init_node_secret();
+        crate::auth::init_reg_secret();
+    });
+}
 
 async fn postgres_pool() -> Option<PgPool> {
     let url = std::env::var("DATABASE_URL")
@@ -429,24 +449,13 @@ async fn pending_insert_is_idempotent() {
 async fn candidacy_nomination_vote_approve_flow() {
     use std::sync::Arc;
 
-    use crate::auth::{init_master_key, init_node_secret, init_reg_secret, AuthContext};
+    use crate::auth::AuthContext;
     use crate::candidacy::{appoint_candidate, nominate_candidate, vote_for_candidate, NominateRequest, VoteRequest};
     use crate::types::Role;
     use crate::AppState;
     use crate::nodes::NodeRegistry;
 
-    if std::env::var("QUAZAR_MASTER_KEY").is_err() {
-        std::env::set_var("QUAZAR_MASTER_KEY", "integration-test-master");
-    }
-    if std::env::var("QUAZAR_NODE_SECRET").is_err() {
-        std::env::set_var("QUAZAR_NODE_SECRET", "integration-test-node");
-    }
-    if std::env::var("QUAZAR_REG_SECRET").is_err() {
-        std::env::set_var("QUAZAR_REG_SECRET", "integration-test-reg");
-    }
-    init_master_key();
-    init_node_secret();
-    init_reg_secret();
+    ensure_test_auth_secrets();
 
     let Some(pool) = postgres_pool().await else {
         eprintln!("skip candidacy_nomination_vote_approve_flow: PostgreSQL unavailable");
@@ -572,4 +581,237 @@ async fn candidacy_nomination_vote_approve_flow() {
         .await
         .expect("role");
     assert_eq!(role, "Guardian");
+}
+
+#[tokio::test]
+async fn chat_send_and_list_messages() {
+    use std::sync::Arc;
+
+    use crate::auth::AuthContext;
+    use crate::chat::{list_messages, send_message, ListMessagesQuery, SendMessageRequest};
+    use crate::types::Role;
+    use crate::AppState;
+    use crate::nodes::NodeRegistry;
+
+    ensure_test_auth_secrets();
+
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip chat_send_and_list_messages: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool).await.expect("migrations");
+
+    let n = uuid::Uuid::new_v4().simple().to_string();
+    let citizen_id = format!("chat-citizen-{n}");
+    let citizen_name = format!("chatuser{n}");
+
+    let event = build_citizen_added_event(
+        &format!("citizen_add_{citizen_id}"),
+        &citizen_id,
+        &citizen_name,
+        "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "ChatCity",
+        "Citizen",
+        "system",
+        1_700_002_000,
+    );
+    let mut tx = pool.begin().await.expect("tx");
+    confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
+    tx.commit().await.expect("commit");
+
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        node_registry: Arc::new(NodeRegistry::new(pool.clone())),
+        node_id: "TEST-NODE".to_string(),
+    });
+
+    let auth = AuthContext::from_api_key(citizen_name.clone(), Role::Citizen);
+    let sent = send_message(
+        state.clone(),
+        &auth,
+        SendMessageRequest {
+            content: "  Тестовое сообщение чата  ".to_string(),
+        },
+    )
+    .await
+    .expect("send");
+
+    assert_eq!(sent.content, "Тестовое сообщение чата");
+    assert_eq!(sent.citizen_id, citizen_id);
+    assert_eq!(sent.citizen_name, citizen_name);
+
+    let messages = list_messages(
+        &pool,
+        ListMessagesQuery {
+            limit: Some(10),
+            before: None,
+        },
+    )
+    .await
+    .expect("list");
+
+    assert!(
+        messages.iter().any(|m| m.id == sent.id),
+        "sent message should appear in list"
+    );
+
+    let empty_send = send_message(
+        state,
+        &auth,
+        SendMessageRequest {
+            content: "   ".to_string(),
+        },
+    )
+    .await;
+    assert!(empty_send.is_err(), "empty message should be rejected");
+}
+
+#[tokio::test]
+async fn initiative_propose_and_vote_flow() {
+    use std::sync::Arc;
+
+    use crate::auth::AuthContext;
+    use crate::initiative::{propose_initiative, vote_on_initiative, ProposeRequest, VoteRequest};
+    use crate::types::Role;
+    use crate::AppState;
+    use crate::nodes::NodeRegistry;
+
+    ensure_test_auth_secrets();
+
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip initiative_propose_and_vote_flow: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool).await.expect("migrations");
+
+    let n = uuid::Uuid::new_v4().simple().to_string();
+    let proposer_id = format!("init-prop-{n}");
+    let voter_id = format!("init-vote-{n}");
+    let proposer_name = format!("initp{n}");
+    let voter_name = format!("initv{n}");
+
+    for (id, name) in [(&proposer_id, &proposer_name), (&voter_id, &voter_name)] {
+        let event = build_citizen_added_event(
+            &format!("citizen_add_{id}"),
+            id,
+            name,
+            "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+            "InitCity",
+            "Citizen",
+            "system",
+            1_700_003_000,
+        );
+        let mut tx = pool.begin().await.expect("tx");
+        confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
+        tx.commit().await.expect("commit");
+    }
+
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        node_registry: Arc::new(NodeRegistry::new(pool.clone())),
+        node_id: "TEST-NODE".to_string(),
+    });
+
+    let proposer_auth = AuthContext::from_api_key(proposer_name.clone(), Role::Citizen);
+    let initiative = propose_initiative(
+        state.clone(),
+        &proposer_auth,
+        ProposeRequest {
+            title: "Тестовая инициатива".to_string(),
+            description: "Описание инициативы для теста".to_string(),
+        },
+    )
+    .await
+    .expect("propose");
+
+    assert_eq!(initiative.status, "Proposed");
+    assert_eq!(initiative.title, "Тестовая инициатива");
+    assert!(initiative.threshold >= 1);
+
+    let voter_auth = AuthContext::from_api_key(voter_name.clone(), Role::Citizen);
+    let voted = vote_on_initiative(
+        state.clone(),
+        &voter_auth,
+        &initiative.id,
+        VoteRequest {
+            vote: "For".to_string(),
+        },
+    )
+    .await
+    .expect("vote");
+
+    assert!(voted.votes_for >= 1);
+}
+
+#[tokio::test]
+async fn referendum_announce_and_vote_flow() {
+    use std::sync::Arc;
+
+    use crate::auth::AuthContext;
+    use crate::referendum::{announce_referendum, vote_on_referendum, AnnounceRequest, VoteRequest};
+    use crate::types::Role;
+    use crate::AppState;
+    use crate::nodes::NodeRegistry;
+
+    ensure_test_auth_secrets();
+
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip referendum_announce_and_vote_flow: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool).await.expect("migrations");
+
+    let n = uuid::Uuid::new_v4().simple().to_string();
+    let voter_id = format!("ref-vote-{n}");
+    let voter_name = format!("refv{n}");
+
+    let voter_event = build_citizen_added_event(
+        &format!("citizen_add_{voter_id}"),
+        &voter_id,
+        &voter_name,
+        "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "RefCity",
+        "Citizen",
+        "system",
+        1_700_004_000,
+    );
+    let mut tx = pool.begin().await.expect("tx");
+    confirm_event_in_block_tx(&mut tx, &voter_event).await.expect("confirm");
+    tx.commit().await.expect("commit");
+
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        node_registry: Arc::new(NodeRegistry::new(pool.clone())),
+        node_id: "TEST-NODE".to_string(),
+    });
+
+    let aiya_auth = AuthContext::master();
+    let referendum = announce_referendum(
+        state.clone(),
+        &aiya_auth,
+        AnnounceRequest {
+            title: "Референдум о налогах".to_string(),
+            description: "Отмена решения о налогах".to_string(),
+            target_decision: "Закон о налогах".to_string(),
+        },
+    )
+    .await
+    .expect("announce");
+
+    assert_eq!(referendum.status, "Active");
+    assert_eq!(referendum.target_decision, "Закон о налогах");
+
+    let voter_auth = AuthContext::from_api_key(voter_name.clone(), Role::Citizen);
+    let voted = vote_on_referendum(
+        state.clone(),
+        &voter_auth,
+        &referendum.id,
+        VoteRequest {
+            vote: "Against".to_string(),
+        },
+    )
+    .await
+    .expect("vote");
+
+    assert_eq!(voted.votes_against, 1);
 }

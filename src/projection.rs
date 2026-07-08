@@ -19,6 +19,11 @@ pub async fn apply_event_projections_in_tx(
             "CandidateVoted" => apply_candidate_voted(tx, event).await?,
             "CandidateApproved" => apply_candidate_approved(tx, event).await?,
             "CandidateAppointed" => apply_candidate_appointed(tx, event).await?,
+            "LawProposed" => apply_law_proposed(tx, event).await?,
+            "LawVoteStarted" => apply_law_vote_started(tx, event).await?,
+            "LawVoteResult" => apply_law_vote_result(tx, event).await?,
+            "VoteCast" => apply_vote_cast(tx, event).await?,
+            "ElectionAnnounced" => apply_election_announced(tx, event).await?,
             _ => {}
         }
     }
@@ -377,5 +382,210 @@ async fn apply_candidate_appointed(
     .map_err(|e| format!("CandidateAppointed api_keys sync failed: {}", e))?;
 
     tracing::info!(candidacy_id = %candidacy_id, citizen_id = %citizen_id, event_id = %event.event_id, "CandidateAppointed projected");
+    Ok(())
+}
+
+async fn apply_law_proposed(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+) -> Result<(), String> {
+    let law_id = require_str(&event.data, "law_id")?;
+    let title = require_str(&event.data, "title")?;
+    let description = require_str(&event.data, "description")?;
+    let proposer_id = require_str(&event.data, "proposer_id")?;
+    let threshold = event
+        .data
+        .get("threshold")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1) as i32;
+
+    sqlx::query(
+        r#"
+        INSERT INTO initiatives (id, title, description, status, proposer_id, votes_for, votes_against, votes_abstain, threshold, created_at)
+        VALUES ($1, $2, $3, 'Proposed', $4, 0, 0, 0, $5, to_timestamp($6))
+        ON CONFLICT (id) DO NOTHING
+        "#,
+    )
+    .bind(law_id)
+    .bind(title)
+    .bind(description)
+    .bind(proposer_id)
+    .bind(threshold)
+    .bind(event.timestamp as f64)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("LawProposed projection failed: {}", e))?;
+
+    tracing::info!(law_id = %law_id, event_id = %event.event_id, "LawProposed projected");
+    Ok(())
+}
+
+async fn apply_law_vote_started(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+) -> Result<(), String> {
+    let law_id = require_str(&event.data, "law_id")?;
+    sqlx::query(
+        "UPDATE initiatives SET status = 'Proposed' WHERE id = $1 AND status != 'Passed'",
+    )
+    .bind(law_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("LawVoteStarted projection failed: {}", e))?;
+
+    tracing::info!(law_id = %law_id, event_id = %event.event_id, "LawVoteStarted projected");
+    Ok(())
+}
+
+async fn apply_law_vote_result(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+) -> Result<(), String> {
+    let law_id = require_str(&event.data, "law_id")?;
+    let result = event
+        .data
+        .get("result")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Passed");
+
+    if result == "Passed" {
+        sqlx::query(
+            "UPDATE initiatives SET status = 'Passed', passed_at = to_timestamp($1) WHERE id = $2",
+        )
+        .bind(event.timestamp as f64)
+        .bind(law_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("LawVoteResult projection failed: {}", e))?;
+    }
+
+    tracing::info!(law_id = %law_id, result = %result, event_id = %event.event_id, "LawVoteResult projected");
+    Ok(())
+}
+
+async fn apply_vote_cast(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+) -> Result<(), String> {
+    let vote_id = require_str(&event.data, "vote_id")?;
+    let citizen_id = require_str(&event.data, "citizen_id")?;
+    let choice = require_str(&event.data, "choice")?;
+    let record_id = format!("{vote_id}_{citizen_id}");
+
+    let is_initiative: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM initiatives WHERE id = $1)",
+    )
+    .bind(vote_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| format!("VoteCast initiative check failed: {}", e))?;
+
+    if is_initiative {
+        sqlx::query(
+            r#"
+            INSERT INTO initiative_votes (id, initiative_id, citizen_id, vote, created_at)
+            VALUES ($1, $2, $3, $4, to_timestamp($5))
+            ON CONFLICT (initiative_id, citizen_id) DO UPDATE SET vote = EXCLUDED.vote
+            "#,
+        )
+        .bind(&record_id)
+        .bind(vote_id)
+        .bind(citizen_id)
+        .bind(choice)
+        .bind(event.timestamp as f64)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("VoteCast initiative projection failed: {}", e))?;
+
+        sqlx::query(
+            r#"
+            UPDATE initiatives SET
+                votes_for = (SELECT COUNT(*)::int FROM initiative_votes WHERE initiative_id = $1 AND vote = 'For'),
+                votes_against = (SELECT COUNT(*)::int FROM initiative_votes WHERE initiative_id = $1 AND vote = 'Against'),
+                votes_abstain = (SELECT COUNT(*)::int FROM initiative_votes WHERE initiative_id = $1 AND vote = 'Abstain')
+            WHERE id = $1
+            "#,
+        )
+        .bind(vote_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("VoteCast initiative count refresh failed: {}", e))?;
+    } else {
+        let is_referendum: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM referendums WHERE id = $1)",
+        )
+        .bind(vote_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| format!("VoteCast referendum check failed: {}", e))?;
+
+        if is_referendum {
+            sqlx::query(
+                r#"
+                INSERT INTO referendum_votes (id, referendum_id, citizen_id, vote, created_at)
+                VALUES ($1, $2, $3, $4, to_timestamp($5))
+                ON CONFLICT (referendum_id, citizen_id) DO UPDATE SET vote = EXCLUDED.vote
+                "#,
+            )
+            .bind(&record_id)
+            .bind(vote_id)
+            .bind(citizen_id)
+            .bind(choice)
+            .bind(event.timestamp as f64)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| format!("VoteCast referendum projection failed: {}", e))?;
+
+            sqlx::query(
+                r#"
+                UPDATE referendums SET
+                    votes_for = (SELECT COUNT(*)::int FROM referendum_votes WHERE referendum_id = $1 AND vote = 'For'),
+                    votes_against = (SELECT COUNT(*)::int FROM referendum_votes WHERE referendum_id = $1 AND vote = 'Against'),
+                    votes_abstain = (SELECT COUNT(*)::int FROM referendum_votes WHERE referendum_id = $1 AND vote = 'Abstain')
+                WHERE id = $1
+                "#,
+            )
+            .bind(vote_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| format!("VoteCast referendum count refresh failed: {}", e))?;
+        }
+    }
+
+    tracing::info!(vote_id = %vote_id, voter = %citizen_id, event_id = %event.event_id, "VoteCast projected");
+    Ok(())
+}
+
+async fn apply_election_announced(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+) -> Result<(), String> {
+    let election_id = require_str(&event.data, "election_id")?;
+    let title = require_str(&event.data, "title")?;
+    let target_decision = require_str(&event.data, "target_decision")?;
+    let announcer_id = event
+        .data
+        .get("announcer_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("system");
+
+    sqlx::query(
+        r#"
+        INSERT INTO referendums (id, title, description, target_decision, status, announcer_id, votes_for, votes_against, votes_abstain, created_at)
+        VALUES ($1, $2, $3, $4, 'Active', $5, 0, 0, 0, to_timestamp($6))
+        ON CONFLICT (id) DO NOTHING
+        "#,
+    )
+    .bind(election_id)
+    .bind(title)
+    .bind(event.description.clone())
+    .bind(target_decision)
+    .bind(announcer_id)
+    .bind(event.timestamp as f64)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("ElectionAnnounced projection failed: {}", e))?;
+
+    tracing::info!(election_id = %election_id, event_id = %event.event_id, "ElectionAnnounced projected");
     Ok(())
 }

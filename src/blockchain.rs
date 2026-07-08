@@ -530,6 +530,256 @@ pub fn build_signed_candidate_appointed_event(
     ))
 }
 
+pub fn build_law_proposed_event(
+    event_id: &str,
+    law_id: &str,
+    title: &str,
+    description: &str,
+    proposer_id: &str,
+    proposer_name: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "LawProposed".to_string(),
+        title: format!("Инициатива: {title}"),
+        description: description.to_string(),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "law_id": law_id,
+            "title": title,
+            "description": description,
+            "proposer_id": proposer_id,
+            "proposer_name": proposer_name,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
+pub fn build_signed_law_proposed_event(
+    event_id: &str,
+    law_id: &str,
+    title: &str,
+    description: &str,
+    proposer_id: &str,
+    proposer_name: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_law_proposed_event(
+        event_id,
+        law_id,
+        title,
+        description,
+        proposer_id,
+        proposer_name,
+        initiator,
+        timestamp,
+    ))
+}
+
+pub fn build_law_vote_started_event(
+    event_id: &str,
+    law_id: &str,
+    vote_id: &str,
+    title: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "LawVoteStarted".to_string(),
+        title: format!("Голосование по инициативе: {title}"),
+        description: format!("Открыто голосование по законопроекту {law_id}"),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "law_id": law_id,
+            "vote_id": vote_id,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
+pub fn build_signed_law_vote_started_event(
+    event_id: &str,
+    law_id: &str,
+    vote_id: &str,
+    title: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_law_vote_started_event(
+        event_id,
+        law_id,
+        vote_id,
+        title,
+        initiator,
+        timestamp,
+    ))
+}
+
+pub fn build_law_vote_result_event(
+    event_id: &str,
+    law_id: &str,
+    vote_id: &str,
+    result: &str,
+    votes_for: i32,
+    votes_against: i32,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "LawVoteResult".to_string(),
+        title: format!("Результат голосования: {result}"),
+        description: format!(
+            "Инициатива {law_id}: за {votes_for}, против {votes_against}"
+        ),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "law_id": law_id,
+            "vote_id": vote_id,
+            "result": result,
+            "votes_for": votes_for,
+            "votes_against": votes_against,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
+pub fn build_signed_law_vote_result_event(
+    event_id: &str,
+    law_id: &str,
+    vote_id: &str,
+    result: &str,
+    votes_for: i32,
+    votes_against: i32,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_law_vote_result_event(
+        event_id,
+        law_id,
+        vote_id,
+        result,
+        votes_for,
+        votes_against,
+        initiator,
+        timestamp,
+    ))
+}
+
+pub fn build_vote_cast_event(
+    event_id: &str,
+    vote_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    choice: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "VoteCast".to_string(),
+        title: format!("Голос {citizen_name}"),
+        description: format!("{citizen_name} проголосовал {choice}"),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "vote_id": vote_id,
+            "citizen_id": citizen_id,
+            "citizen_name": citizen_name,
+            "choice": choice,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
+pub fn build_signed_vote_cast_event(
+    event_id: &str,
+    vote_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    choice: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_vote_cast_event(
+        event_id,
+        vote_id,
+        citizen_id,
+        citizen_name,
+        choice,
+        initiator,
+        timestamp,
+    ))
+}
+
+pub fn build_election_announced_event(
+    event_id: &str,
+    election_id: &str,
+    title: &str,
+    target_decision: &str,
+    announcer_id: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "ElectionAnnounced".to_string(),
+        title: format!("Референдум: {title}"),
+        description: format!("Объявлен референдум по решению: {target_decision}"),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "election_id": election_id,
+            "title": title,
+            "target_decision": target_decision,
+            "announcer_id": announcer_id,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
+pub fn build_signed_election_announced_event(
+    event_id: &str,
+    election_id: &str,
+    title: &str,
+    target_decision: &str,
+    announcer_id: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_election_announced_event(
+        event_id,
+        election_id,
+        title,
+        target_decision,
+        announcer_id,
+        initiator,
+        timestamp,
+    ))
+}
+
 pub fn compute_block_hash(
     block_number: u64,
     timestamp: i64,

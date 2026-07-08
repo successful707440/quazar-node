@@ -15,6 +15,7 @@ mod auth;
 mod block_producer;
 mod blockchain;
 mod candidacy;
+mod chat;
 mod citizen;
 mod db;
 mod exchange;
@@ -22,11 +23,13 @@ mod crypto;
 mod gossip;
 mod handlers;
 mod http;
+mod initiative;
 mod keys;
 mod models;
 mod nodes;
 mod pending;
 mod projection;
+mod referendum;
 mod response;
 mod svod;
 mod types;
@@ -41,6 +44,15 @@ use crypto::assert_production_secrets;
 use citizen::*;
 use candidacy::{
     appoint_handler, get_candidacy_handler, list_candidacies_handler, nominate_handler, vote_handler,
+};
+use chat::{list_messages_handler, send_message_handler};
+use initiative::{
+    get_initiative_handler, list_initiatives_handler, propose_handler as propose_initiative_handler,
+    vote_handler as vote_initiative_handler,
+};
+use referendum::{
+    announce_handler, get_referendum_handler, list_referendums_handler,
+    vote_handler as vote_referendum_handler,
 };
 use handlers::background_sync;
 use http::{auth_middleware, build_cors_layer, rate_limit_middleware};
@@ -154,6 +166,10 @@ async fn main() {
     let public_routes = Router::new()
         .route("/candidacy/list", get(list_candidacies_handler))
         .route("/candidacy/:id", get(get_candidacy_handler))
+        .route("/initiative/list", get(list_initiatives_handler))
+        .route("/initiative/:id", get(get_initiative_handler))
+        .route("/referendum/list", get(list_referendums_handler))
+        .route("/referendum/:id", get(get_referendum_handler))
         .with_state(state.clone());
 
     let protected_routes = Router::new()
@@ -202,6 +218,12 @@ async fn main() {
         .route("/candidacy/nominate", post(nominate_handler))
         .route("/candidacy/:id/vote", post(vote_handler))
         .route("/candidacy/:id/appoint", post(appoint_handler))
+        .route("/initiative/propose", post(propose_initiative_handler))
+        .route("/initiative/:id/vote", post(vote_initiative_handler))
+        .route("/referendum/announce", post(announce_handler))
+        .route("/referendum/:id/vote", post(vote_referendum_handler))
+        .route("/chat/messages", get(list_messages_handler))
+        .route("/chat/send", post(send_message_handler))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .route_layer(middleware::from_fn(rate_limit_middleware))
         .with_state(state.clone());
