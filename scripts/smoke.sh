@@ -13,6 +13,7 @@ export QUAZAR_INIT_TEST_KEYS="${QUAZAR_INIT_TEST_KEYS:-true}"
 export QUAZAR_PORT="${QUAZAR_PORT:-8080}"
 export QUAZAR_NODE_ID="${QUAZAR_NODE_ID:-QZ-NODE-2}"
 export QUAZAR_BLOCK_MIN_EVENTS="${QUAZAR_BLOCK_MIN_EVENTS:-1}"
+export QUAZAR_BLOCK_MAX_WAIT_SECS="${QUAZAR_BLOCK_MAX_WAIT_SECS:-5}"
 export QUAZAR_FORCE_PRODUCER="${QUAZAR_FORCE_PRODUCER:-true}"
 if [ "${SMOKE_USE_RANDOM_PORT:-1}" = "1" ]; then
   export QUAZAR_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')"
