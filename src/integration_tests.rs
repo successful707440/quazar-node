@@ -29,7 +29,7 @@ fn unique_citizen_fixture() -> (String, String, String) {
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
     let citizen_id = format!("citizen-test-{}-{}", n, uuid::Uuid::new_v4());
     let event_id = format!("citizen_add_{}", citizen_id);
-    let name = format!("pending{:x}", n);
+    let name = format!("pend{}_{}", n, uuid::Uuid::new_v4().simple());
     (event_id, citizen_id, name)
 }
 
@@ -134,9 +134,10 @@ async fn pending_registration_not_visible_in_citizens() {
         1_700_000_001,
     );
 
-    pending::insert(&pool, &event)
+    let inserted = pending::insert(&pool, &event)
         .await
         .expect("insert pending");
+    assert_eq!(inserted, pending::PendingInsertResult::Inserted);
 
     assert!(
         pending_exists(&pool, &event_id).await,
@@ -319,4 +320,256 @@ async fn citizen_suspended_projection() {
         .await
         .expect("citizen status");
     assert_eq!(status, "suspended");
+}
+
+#[tokio::test]
+async fn svod_catalog_and_exchange_integration() {
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip svod_catalog_and_exchange_integration: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool)
+        .await
+        .expect("migrations should apply");
+
+    let web_dev = crate::svod::get_service_by_code(&pool, "WEB_DEV", true)
+        .await
+        .expect("seed WEB_DEV service");
+    assert_eq!(web_dev.base_price, 100);
+
+    let catalog = crate::svod::get_catalog(&pool, true)
+        .await
+        .expect("catalog");
+    assert!(catalog.iter().any(|s| s.code == "WEB_DEV"));
+
+    let svc_code = format!("SMOKE_SVC_{}", uuid::Uuid::new_v4().simple());
+
+    let custom = crate::svod::create_service(
+        &pool,
+        crate::svod::CreateServiceRequest {
+            code: svc_code.clone(),
+            name: "Smoke Service".to_string(),
+            description: Some("integration test".to_string()),
+            category_id: None,
+            category_code: Some("IT".to_string()),
+            base_price: 50,
+            min_quantity: Some(1),
+            max_quantity: Some(10),
+        },
+    )
+    .await
+    .expect("create service");
+
+    assert_eq!(custom.code, svc_code);
+
+    let err = crate::svod::create_service(
+        &pool,
+        crate::svod::CreateServiceRequest {
+            code: svc_code.clone(),
+            name: "Duplicate".to_string(),
+            description: None,
+            category_id: None,
+            category_code: None,
+            base_price: 10,
+            min_quantity: None,
+            max_quantity: None,
+        },
+    )
+    .await;
+    assert!(err.is_err());
+
+    let disabled = crate::svod::toggle_service(&pool, &svc_code, false)
+        .await
+        .expect("disable");
+    assert!(!disabled.is_active);
+
+    let inactive = crate::svod::get_service_by_code(&pool, &svc_code, true).await;
+    assert!(inactive.is_err());
+}
+
+#[tokio::test]
+async fn pending_insert_is_idempotent() {
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip pending_insert_is_idempotent: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool)
+        .await
+        .expect("migrations should apply");
+
+    let (event_id, citizen_id, name) = unique_citizen_fixture();
+    let event = build_citizen_added_event(
+        &event_id,
+        &citizen_id,
+        &name,
+        "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "PendingCity",
+        "Citizen",
+        "system",
+        1_700_000_099,
+    );
+
+    let first = pending::insert(&pool, &event)
+        .await
+        .expect("first insert");
+    assert_eq!(first, pending::PendingInsertResult::Inserted);
+
+    let second = pending::insert(&pool, &event)
+        .await
+        .expect("duplicate insert");
+    assert_eq!(second, pending::PendingInsertResult::AlreadyExists);
+
+    assert!(
+        pending_exists(&pool, &event_id).await,
+        "event_id must exist exactly once in pending"
+    );
+}
+
+#[tokio::test]
+async fn candidacy_nomination_vote_approve_flow() {
+    use std::sync::Arc;
+
+    use crate::auth::{init_master_key, init_node_secret, init_reg_secret, AuthContext};
+    use crate::candidacy::{appoint_candidate, nominate_candidate, vote_for_candidate, NominateRequest, VoteRequest};
+    use crate::types::Role;
+    use crate::AppState;
+    use crate::nodes::NodeRegistry;
+
+    if std::env::var("QUAZAR_MASTER_KEY").is_err() {
+        std::env::set_var("QUAZAR_MASTER_KEY", "integration-test-master");
+    }
+    if std::env::var("QUAZAR_NODE_SECRET").is_err() {
+        std::env::set_var("QUAZAR_NODE_SECRET", "integration-test-node");
+    }
+    if std::env::var("QUAZAR_REG_SECRET").is_err() {
+        std::env::set_var("QUAZAR_REG_SECRET", "integration-test-reg");
+    }
+    init_master_key();
+    init_node_secret();
+    init_reg_secret();
+
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip candidacy_nomination_vote_approve_flow: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool).await.expect("migrations");
+
+    let n = uuid::Uuid::new_v4().to_string();
+    let candidate_id = format!("cand-target-{n}");
+    let voter_id = format!("cand-voter-{n}");
+    let nominator_id = format!("cand-nom-{n}");
+
+    for (id, name) in [
+        (&candidate_id, format!("candt{n}")),
+        (&voter_id, format!("candv{n}")),
+        (&nominator_id, format!("candn{n}")),
+    ] {
+        let event = build_citizen_added_event(
+            &format!("citizen_add_{id}"),
+            id,
+            &name,
+            "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+            "CandCity",
+            "Citizen",
+            "system",
+            1_700_001_000,
+        );
+        let mut tx = pool.begin().await.expect("tx");
+        confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
+        tx.commit().await.expect("commit");
+    }
+
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        node_registry: Arc::new(NodeRegistry::new(pool.clone())),
+        node_id: "TEST-NODE".to_string(),
+    });
+
+    let nominator_auth = AuthContext::from_api_key(format!("candn{n}"), Role::Citizen);
+    let row = nominate_candidate(
+        state.clone(),
+        &nominator_auth,
+        NominateRequest {
+            candidate_id: candidate_id.clone(),
+            target_role: "Guardian".to_string(),
+        },
+    )
+    .await
+    .expect("nominate");
+
+    assert_eq!(row.status, "Active");
+    assert_eq!(row.target_role, "Guardian");
+    assert!(row.threshold >= 1);
+
+    let voter_auth = AuthContext::from_api_key(format!("candv{n}"), Role::Citizen);
+    let mut voted = vote_for_candidate(
+        state.clone(),
+        &voter_auth,
+        &row.id,
+        VoteRequest {
+            vote: "For".to_string(),
+        },
+    )
+    .await
+    .expect("vote");
+
+    let mut extra = 0u32;
+    while voted.status == "Active" && voted.votes_for < voted.threshold && extra < 10 {
+        extra += 1;
+        let extra_id = format!("cand-extra-{n}-{extra}");
+        let extra_name = format!("candx{n}{extra}");
+        let event = build_citizen_added_event(
+            &format!("citizen_add_{extra_id}"),
+            &extra_id,
+            &extra_name,
+            "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+            "CandCity",
+            "Citizen",
+            "system",
+            1_700_001_100 + extra as i64,
+        );
+        let mut tx = pool.begin().await.expect("tx");
+        confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm extra voter");
+        tx.commit().await.expect("commit");
+
+        let extra_auth = AuthContext::from_api_key(extra_name, Role::Citizen);
+        voted = vote_for_candidate(
+            state.clone(),
+            &extra_auth,
+            &row.id,
+            VoteRequest {
+                vote: "For".to_string(),
+            },
+        )
+        .await
+        .expect("extra vote");
+    }
+
+    assert!(
+        voted.status == "Approved" || voted.votes_for >= voted.threshold,
+        "expected approval or enough votes: {:?}",
+        voted
+    );
+
+    let aiya_auth = AuthContext::master();
+    let appointed = appoint_candidate(state, &aiya_auth, &row.id)
+        .await
+        .expect("appoint");
+    assert_eq!(appointed.status, "Appointed");
+
+    let pending_events = pending::fetch_all(&pool).await.unwrap_or_default();
+    for event in pending_events {
+        let mut tx = pool.begin().await.expect("tx");
+        confirm_event_in_block_tx(&mut tx, &event)
+            .await
+            .expect("confirm appoint pending");
+        tx.commit().await.expect("commit");
+    }
+
+    let role: String = sqlx::query_scalar("SELECT role FROM citizens WHERE id = $1")
+        .bind(&candidate_id)
+        .fetch_one(&pool)
+        .await
+        .expect("role");
+    assert_eq!(role, "Guardian");
 }

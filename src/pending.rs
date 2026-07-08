@@ -2,15 +2,29 @@ use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::models::Event;
 
-pub async fn insert(pool: &PgPool, event: &Event) -> Result<(), String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingInsertResult {
+    Inserted,
+    AlreadyExists,
+}
+
+pub async fn insert(pool: &PgPool, event: &Event) -> Result<PendingInsertResult, String> {
     let data = serde_json::to_string(event).map_err(|e| e.to_string())?;
-    sqlx::query("INSERT INTO pending_events (event_id, event_data) VALUES ($1, $2)")
-        .bind(&event.event_id)
-        .bind(data)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("Failed to insert pending event {}: {}", event.event_id, e))?;
-    Ok(())
+    let result = sqlx::query(
+        "INSERT INTO pending_events (event_id, event_data) VALUES ($1, $2)
+         ON CONFLICT (event_id) DO NOTHING",
+    )
+    .bind(&event.event_id)
+    .bind(data)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to insert pending event {}: {}", event.event_id, e))?;
+
+    if result.rows_affected() == 0 {
+        Ok(PendingInsertResult::AlreadyExists)
+    } else {
+        Ok(PendingInsertResult::Inserted)
+    }
 }
 
 pub async fn fetch_all(pool: &PgPool) -> Result<Vec<Event>, String> {

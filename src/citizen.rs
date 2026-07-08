@@ -15,7 +15,7 @@ pub use crate::types::Role;
 use crate::auth::{registration_signature, AuthContext};
 use crate::block_producer;
 use crate::blockchain::{
-    build_citizen_added_event, build_signed_citizen_status_event,
+    build_citizen_added_event, build_signed_citizen_role_event, build_signed_citizen_status_event,
     build_signed_passport_issued_event, build_signed_passport_revoked_event, compute_event_hash,
 };
 use crate::models::Event;
@@ -107,6 +107,11 @@ pub struct IssuePassportRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateStatusRequest {
     pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateRoleRequest {
+    pub role: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,9 +330,15 @@ async fn submit_pending_event(
         ));
     }
 
-    if let Err(e) = pending::insert(&state.db, &event).await {
-        return Err(CitizenError::DatabaseError(format!("Не удалось добавить событие: {}", e))
-            .to_response());
+    match pending::insert(&state.db, &event).await {
+        Ok(pending::PendingInsertResult::Inserted) => {}
+        Ok(pending::PendingInsertResult::AlreadyExists) => {
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(CitizenError::DatabaseError(format!("Не удалось добавить событие: {}", e))
+                .to_response());
+        }
     }
 
     let state_gossip = state.clone();
@@ -531,6 +542,56 @@ pub async fn update_status(
             event_type: event.event_type,
             status: "pending".to_string(),
         })),
+    )
+}
+
+pub async fn update_role(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateRoleRequest>,
+) -> impl IntoResponse {
+    if !auth.can_change_citizen_role() {
+        return CitizenError::InsufficientPermissions.to_response();
+    }
+
+    let new_role = match Role::from_str(&req.role) {
+        Some(role) => role,
+        None => return CitizenError::InvalidRole.to_response(),
+    };
+
+    let mut citizen = match get_citizen_by_id(&state.db, &id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return CitizenError::CitizenNotFound.to_response(),
+        Err(e) => return e.to_response(),
+    };
+
+    if citizen.role == new_role {
+        return (
+            StatusCode::OK,
+            Json(ApiResponse::success(CitizenResponse::from(citizen))),
+        );
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let event_id = format!("citizen_role_{}_{}", citizen.id, now);
+    let event = build_signed_citizen_role_event(
+        &event_id,
+        &citizen.id,
+        &citizen.name,
+        new_role.as_str(),
+        &auth.citizen_name,
+        now,
+    );
+
+    if let Err(resp) = submit_pending_event(state, event).await {
+        return resp;
+    }
+
+    citizen.role = new_role;
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success(CitizenResponse::from(citizen))),
     )
 }
 

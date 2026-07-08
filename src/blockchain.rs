@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::models::{Block, Event};
+use crate::projection;
 
 fn compute_hash(data: &str) -> String {
     let mut hasher = Sha256::new();
@@ -197,6 +198,32 @@ pub fn build_citizen_updated_event(
     }
 }
 
+pub fn build_citizen_role_updated_event(
+    event_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    role: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "CitizenUpdated".to_string(),
+        title: format!("Смена роли гражданина {}", citizen_name),
+        description: format!("Роль гражданина {} изменена на {}", citizen_name, role),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "citizen_id": citizen_id,
+            "role": role,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
 fn signed_pending_event(mut event: Event) -> Event {
     event.hash = Some(compute_event_hash(&event));
     event.signatures = vec![crate::auth::internal_node_signature(
@@ -266,6 +293,241 @@ pub fn build_signed_citizen_status_event(
         ),
     };
     signed_pending_event(event)
+}
+
+pub fn build_signed_citizen_role_event(
+    event_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    role: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_citizen_role_updated_event(
+        event_id,
+        citizen_id,
+        citizen_name,
+        role,
+        initiator,
+        timestamp,
+    ))
+}
+
+pub fn build_candidate_nominated_event(
+    event_id: &str,
+    candidacy_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    target_role: &str,
+    nominator_id: &str,
+    nominator_name: &str,
+    threshold: i32,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "CandidateNominated".to_string(),
+        title: format!("Кандидатура {} на роль {}", citizen_name, target_role),
+        description: format!(
+            "Гражданин {} выдвинут на роль {} (порог {} голосов)",
+            citizen_name, target_role, threshold
+        ),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "candidacy_id": candidacy_id,
+            "citizen_id": citizen_id,
+            "citizen_name": citizen_name,
+            "target_role": target_role,
+            "nominator_id": nominator_id,
+            "nominator_name": nominator_name,
+            "threshold": threshold,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
+pub fn build_signed_candidate_nominated_event(
+    event_id: &str,
+    candidacy_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    target_role: &str,
+    nominator_id: &str,
+    nominator_name: &str,
+    threshold: i32,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_candidate_nominated_event(
+        event_id,
+        candidacy_id,
+        citizen_id,
+        citizen_name,
+        target_role,
+        nominator_id,
+        nominator_name,
+        threshold,
+        initiator,
+        timestamp,
+    ))
+}
+
+pub fn build_candidate_voted_event(
+    event_id: &str,
+    candidacy_id: &str,
+    voter_id: &str,
+    voter_name: &str,
+    vote: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "CandidateVoted".to_string(),
+        title: format!("Голос за кандидатуру {}", candidacy_id),
+        description: format!("{} проголосовал {}", voter_name, vote),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "candidacy_id": candidacy_id,
+            "citizen_id": voter_id,
+            "citizen_name": voter_name,
+            "vote": vote,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
+pub fn build_signed_candidate_voted_event(
+    event_id: &str,
+    candidacy_id: &str,
+    voter_id: &str,
+    voter_name: &str,
+    vote: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_candidate_voted_event(
+        event_id,
+        candidacy_id,
+        voter_id,
+        voter_name,
+        vote,
+        initiator,
+        timestamp,
+    ))
+}
+
+pub fn build_candidate_approved_event(
+    event_id: &str,
+    candidacy_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    target_role: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "CandidateApproved".to_string(),
+        title: format!("Кандидатура {} утверждена", citizen_name),
+        description: format!(
+            "Кандидат {} набрал порог голосов для роли {}",
+            citizen_name, target_role
+        ),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "candidacy_id": candidacy_id,
+            "citizen_id": citizen_id,
+            "citizen_name": citizen_name,
+            "target_role": target_role,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
+pub fn build_signed_candidate_approved_event(
+    event_id: &str,
+    candidacy_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    target_role: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_candidate_approved_event(
+        event_id,
+        candidacy_id,
+        citizen_id,
+        citizen_name,
+        target_role,
+        initiator,
+        timestamp,
+    ))
+}
+
+pub fn build_candidate_appointed_event(
+    event_id: &str,
+    candidacy_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    target_role: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    Event {
+        event_id: event_id.to_string(),
+        timestamp,
+        event_type: "CandidateAppointed".to_string(),
+        title: format!("Назначение {} на роль {}", citizen_name, target_role),
+        description: format!(
+            "Айя назначила {} на роль {}",
+            citizen_name, target_role
+        ),
+        initiator: initiator.to_string(),
+        data: serde_json::json!({
+            "candidacy_id": candidacy_id,
+            "citizen_id": citizen_id,
+            "citizen_name": citizen_name,
+            "target_role": target_role,
+        }),
+        previous_hash: "0".to_string(),
+        signatures: vec![],
+        hash: None,
+        public: true,
+    }
+}
+
+pub fn build_signed_candidate_appointed_event(
+    event_id: &str,
+    candidacy_id: &str,
+    citizen_id: &str,
+    citizen_name: &str,
+    target_role: &str,
+    initiator: &str,
+    timestamp: i64,
+) -> Event {
+    signed_pending_event(build_candidate_appointed_event(
+        event_id,
+        candidacy_id,
+        citizen_id,
+        citizen_name,
+        target_role,
+        initiator,
+        timestamp,
+    ))
 }
 
 pub fn compute_block_hash(
@@ -456,6 +718,180 @@ async fn insert_event(
     Ok(())
 }
 
+/// First block number where local and peer chains diverge (hash mismatch).
+pub fn find_fork_block(local: &[Block], peer: &[Block]) -> Option<u64> {
+    let peer_by_number: std::collections::HashMap<u64, &Block> =
+        peer.iter().map(|b| (b.block_number, b)).collect();
+
+    for local_block in local {
+        match peer_by_number.get(&local_block.block_number) {
+            Some(peer_block) if peer_block.block_hash != local_block.block_hash => {
+                return Some(local_block.block_number);
+            }
+            None => return Some(local_block.block_number),
+            _ => {}
+        }
+    }
+    None
+}
+
+pub fn block_number_from_reject(reason: &str) -> Option<u64> {
+    let rest = reason.strip_prefix("block #")?;
+    rest.split(':').next()?.parse().ok()
+}
+
+/// True when blocks 1..fork_block-1 match on both chains.
+pub fn chains_share_prefix(local: &[Block], peer: &[Block], fork_block: u64) -> bool {
+    if fork_block <= 1 {
+        return true;
+    }
+    for block_number in 1..fork_block {
+        let local_hash = local
+            .iter()
+            .find(|b| b.block_number == block_number)
+            .map(|b| b.block_hash.as_str());
+        let peer_hash = peer
+            .iter()
+            .find(|b| b.block_number == block_number)
+            .map(|b| b.block_hash.as_str());
+        if local_hash != peer_hash {
+            return false;
+        }
+    }
+    true
+}
+
+pub async fn load_blocks_from_db(pool: &PgPool) -> Result<Vec<Block>, String> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT block_data FROM blocks ORDER BY block_number ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to load blocks: {}", e))?;
+
+    rows.iter()
+        .map(|data| {
+            serde_json::from_str(data)
+                .map_err(|e| format!("Failed to parse block_data: {}", e))
+        })
+        .collect()
+}
+
+/// Removes blocks/events from `from_block` upward and rebuilds SQL projections from the surviving chain.
+pub async fn truncate_chain_from(pool: &PgPool, from_block: u64) -> Result<(), String> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("Failed to start truncate transaction: {}", e))?;
+
+    let block_rows: Vec<String> = sqlx::query_scalar(
+        "SELECT block_data FROM blocks WHERE block_number >= $1 ORDER BY block_number",
+    )
+    .bind(from_block as i64)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| format!("Failed to load blocks for truncate: {}", e))?;
+
+    for data in &block_rows {
+        let block: Block = serde_json::from_str(data)
+            .map_err(|e| format!("Failed to parse block during truncate: {}", e))?;
+        for event in &block.events {
+            sqlx::query("DELETE FROM events WHERE event_id = $1")
+                .bind(&event.event_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("Failed to delete event {}: {}", event.event_id, e))?;
+        }
+    }
+
+    sqlx::query("DELETE FROM blocks WHERE block_number >= $1")
+        .bind(from_block as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("Failed to delete blocks from #{}: {}", from_block, e))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("Failed to commit truncate: {}", e))?;
+
+    replay_projections(pool).await
+}
+
+/// Rebuilds citizens/passports from all blocks still in the chain.
+pub async fn replay_projections(pool: &PgPool) -> Result<(), String> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("Failed to start replay transaction: {}", e))?;
+
+    sqlx::query("DELETE FROM candidacy_votes")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("Failed to clear candidacy_votes: {}", e))?;
+    sqlx::query("DELETE FROM candidacies")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("Failed to clear candidacies: {}", e))?;
+    sqlx::query("DELETE FROM passports")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("Failed to clear passports: {}", e))?;
+    sqlx::query("DELETE FROM citizens")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("Failed to clear citizens: {}", e))?;
+
+    let block_rows: Vec<String> = sqlx::query_scalar(
+        "SELECT block_data FROM blocks ORDER BY block_number ASC",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| format!("Failed to load blocks for replay: {}", e))?;
+
+    for data in block_rows {
+        let block: Block = serde_json::from_str(&data)
+            .map_err(|e| format!("Failed to parse block during replay: {}", e))?;
+        projection::apply_event_projections_in_tx(&mut tx, &block.events).await?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("Failed to commit replay: {}", e))?;
+
+    Ok(())
+}
+
+/// Replaces the local chain suffix from `from_block` with the peer's validated blocks.
+pub async fn adopt_peer_suffix(
+    pool: &PgPool,
+    from_block: u64,
+    peer_blocks: &[Block],
+) -> Result<(), String> {
+    truncate_chain_from(pool, from_block).await?;
+
+    let mut suffix: Vec<Block> = peer_blocks
+        .iter()
+        .filter(|b| b.block_number >= from_block)
+        .cloned()
+        .collect();
+    suffix.sort_by_key(|b| b.block_number);
+
+    for block in suffix {
+        match classify_block(&block, pool).await {
+            SyncBlockAction::Insert => insert_synced_block(pool, &block).await?,
+            SyncBlockAction::Skip => {}
+            SyncBlockAction::Reject(reason) => {
+                return Err(format!(
+                    "adopt_peer_suffix: block #{}: {}",
+                    block.block_number, reason
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,5 +947,43 @@ mod tests {
         event.hash = Some("deadbeef".to_string());
         let err = validate_event_hashes(&[event]).unwrap_err();
         assert!(err.contains("invalid hash"));
+    }
+
+    fn block(n: u64, hash: &str) -> Block {
+        Block {
+            block_number: n,
+            timestamp: n as i64,
+            events: vec![],
+            previous_hash: if n == 1 {
+                "0".to_string()
+            } else {
+                format!("prev{}", n - 1)
+            },
+            block_hash: hash.to_string(),
+            events_count: 0,
+        }
+    }
+
+    #[test]
+    fn find_fork_block_detects_hash_mismatch() {
+        let local = vec![block(1, "a"), block(2, "b"), block(3, "local")];
+        let peer = vec![block(1, "a"), block(2, "b"), block(3, "peer")];
+        assert_eq!(find_fork_block(&local, &peer), Some(3));
+    }
+
+    #[test]
+    fn find_fork_block_returns_none_when_chains_match() {
+        let local = vec![block(1, "a"), block(2, "b")];
+        let peer = vec![block(1, "a"), block(2, "b")];
+        assert_eq!(find_fork_block(&local, &peer), None);
+    }
+
+    #[test]
+    fn chains_share_prefix_checks_blocks_before_fork() {
+        let local = vec![block(1, "a"), block(2, "b"), block(3, "local")];
+        let peer = vec![block(1, "a"), block(2, "b"), block(3, "peer")];
+        assert!(chains_share_prefix(&local, &peer, 3));
+        let diverged = vec![block(1, "x"), block(2, "b"), block(3, "peer")];
+        assert!(!chains_share_prefix(&local, &diverged, 3));
     }
 }

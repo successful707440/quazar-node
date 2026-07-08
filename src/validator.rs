@@ -145,7 +145,31 @@ impl EventValidator {
             QuazarEventType::CitizenRemoved | QuazarEventType::CitizenUpdated => {
                 Self::require_str(data, "citizen_id")?;
                 if matches!(event_type, QuazarEventType::CitizenUpdated) {
-                    Self::require_str(data, "status")?;
+                    let has_status = data
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| !s.is_empty());
+                    let has_role = data
+                        .get("role")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| !s.is_empty());
+                    if !has_status && !has_role {
+                        return Err(ValidationError::MissingRequiredField(
+                            "status or role".to_string(),
+                        ));
+                    }
+                    if has_role {
+                        let role = data
+                            .get("role")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if crate::types::Role::from_str(role).is_none() {
+                            return Err(ValidationError::DataValidationFailed(format!(
+                                "Invalid role: {}",
+                                role
+                            )));
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -258,6 +282,38 @@ impl EventValidator {
             }
             QuazarEventType::VoteFinalized => {
                 Self::require_str(data, "vote_id")?;
+                Ok(())
+            }
+            QuazarEventType::CandidateNominated => {
+                Self::require_str(data, "candidacy_id")?;
+                Self::require_str(data, "citizen_id")?;
+                Self::require_str(data, "target_role")?;
+                Self::require_str(data, "nominator_id")?;
+                let role = Self::require_str(data, "target_role")?;
+                if !matches!(role, "Guardian" | "Judge" | "Aiya") {
+                    return Err(ValidationError::DataValidationFailed(format!(
+                        "Invalid target_role for candidacy: {}",
+                        role
+                    )));
+                }
+                Ok(())
+            }
+            QuazarEventType::CandidateVoted => {
+                Self::require_str(data, "candidacy_id")?;
+                Self::require_str(data, "citizen_id")?;
+                let vote = Self::require_str(data, "vote")?;
+                if !matches!(vote, "For" | "Against" | "Abstain") {
+                    return Err(ValidationError::DataValidationFailed(format!(
+                        "Invalid vote: {}",
+                        vote
+                    )));
+                }
+                Ok(())
+            }
+            QuazarEventType::CandidateApproved | QuazarEventType::CandidateAppointed => {
+                Self::require_str(data, "candidacy_id")?;
+                Self::require_str(data, "citizen_id")?;
+                Self::require_str(data, "target_role")?;
                 Ok(())
             }
         }

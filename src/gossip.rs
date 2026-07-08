@@ -91,9 +91,16 @@ pub async fn receive_gossip_event(
         return Err(e.message());
     }
 
-    pending::insert(&state.db, &event)
-        .await
-        .map_err(|e| format!("Failed to store gossip event: {}", e))?;
+    match pending::insert(&state.db, &event).await {
+        Ok(pending::PendingInsertResult::Inserted) => {}
+        Ok(pending::PendingInsertResult::AlreadyExists) => {
+            return Ok(ApiResponse::success(serde_json::json!({
+                "event_id": event.event_id,
+                "message": "Already in pending, skipped"
+            })));
+        }
+        Err(e) => return Err(format!("Failed to store gossip event: {}", e)),
+    }
 
     Ok(ApiResponse::success(serde_json::json!({
         "event_id": event.event_id,

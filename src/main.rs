@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use axum::{
     middleware,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use chrono::Utc;
@@ -14,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 mod auth;
 mod block_producer;
 mod blockchain;
+mod candidacy;
 mod citizen;
 mod db;
 mod exchange;
@@ -27,6 +28,7 @@ mod nodes;
 mod pending;
 mod projection;
 mod response;
+mod svod;
 mod types;
 mod validator;
 mod votes;
@@ -37,6 +39,9 @@ mod integration_tests;
 use auth::{init_master_key, init_node_secret, init_reg_secret, master_key, node_secret, reg_secret, KeyStore};
 use crypto::assert_production_secrets;
 use citizen::*;
+use candidacy::{
+    appoint_handler, get_candidacy_handler, list_candidacies_handler, nominate_handler, vote_handler,
+};
 use handlers::background_sync;
 use http::{auth_middleware, build_cors_layer, rate_limit_middleware};
 use nodes::{Node, NodeRegistry, NodeStatus};
@@ -96,6 +101,17 @@ async fn main() {
     };
     let _ = node_registry.upsert_node(&my_node).await;
 
+    if node_id != "QZ-NODE" {
+        if let Err(e) = sqlx::query(
+            "UPDATE nodes SET status = 'dead' WHERE id = 'QZ-NODE' AND url LIKE '%localhost%'",
+        )
+        .execute(&pool)
+        .await
+        {
+            tracing::warn!(error = %e, "failed to retire legacy QZ-NODE registry entry");
+        }
+    }
+
     if let Ok(bootstrap) = std::env::var("QUAZAR_BOOTSTRAP_PEERS") {
         for entry in bootstrap.split(',') {
             let entry = entry.trim();
@@ -135,6 +151,11 @@ async fn main() {
         background_sync(state_clone).await;
     });
 
+    let public_routes = Router::new()
+        .route("/candidacy/list", get(list_candidacies_handler))
+        .route("/candidacy/:id", get(get_candidacy_handler))
+        .with_state(state.clone());
+
     let protected_routes = Router::new()
         .route("/blocks", get(handlers::get_blocks))
         .route("/events", get(handlers::get_events))
@@ -145,6 +166,7 @@ async fn main() {
         .route("/peers/network", post(handlers::add_peer_to_network))
         .route("/online", post(handlers::online_handler))
         .route("/offline", post(handlers::offline_handler))
+        .route("/citizens/online", get(handlers::list_online_citizens))
         .route("/vote", post(handlers::cast_vote_handler))
         .route("/votes", post(votes::create_vote))
         .route("/votes", get(votes::list_votes))
@@ -157,22 +179,36 @@ async fn main() {
         .route("/exchange/orders", get(exchange::get_orders))
         .route("/exchange/balance", get(exchange::get_balance_handler))
         .route("/exchange/balance/add", post(exchange::add_balance))
+        .route("/svod", get(svod::get_catalog_handler))
+        .route("/svod/categories", get(svod::get_categories_handler))
+        .route("/svod/service/:code", get(svod::get_service_handler))
+        .route("/svod/admin/service", post(svod::create_service_handler))
+        .route("/svod/admin/service/:code", put(svod::update_service_handler))
+        .route("/svod/admin/service/:code", delete(svod::disable_service_handler))
         .route("/keys", post(keys::create_api_key))
         .route("/keys", get(keys::list_api_keys))
         .route("/keys/revoke", post(keys::revoke_api_key))
+        .route("/keys/internal/export", get(keys::internal_export_keys))
+        .route("/keys/internal/upsert", post(keys::internal_upsert_key))
+        .route("/keys/internal/revoke", post(keys::internal_revoke_key))
         .route("/citizen/register", post(register_citizen))
         .route("/citizen/list", get(list_citizens))
         .route("/citizen/:id", get(get_citizen))
         .route("/citizen/:id/status", patch(update_status))
+        .route("/citizen/:id/role", patch(update_role))
         .route("/citizen/:id/passport", post(issue_passport))
         .route("/citizen/:id/passport/revoke", post(revoke_passport))
         .route("/citizen/search", get(search_citizens))
+        .route("/candidacy/nominate", post(nominate_handler))
+        .route("/candidacy/:id/vote", post(vote_handler))
+        .route("/candidacy/:id/appoint", post(appoint_handler))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .route_layer(middleware::from_fn(rate_limit_middleware))
         .with_state(state.clone());
 
     let app = Router::new()
         .route("/status", get(handlers::status))
+        .merge(public_routes)
         .merge(protected_routes)
         .layer(TraceLayer::new_for_http())
         .layer(build_cors_layer())

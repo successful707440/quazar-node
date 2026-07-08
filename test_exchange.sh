@@ -21,11 +21,16 @@ curl -s -X POST "$BASE_URL/exchange/balance/add" \
   -d '{"citizen_id": "test_citizen", "amount": 1000}' | jq '.'
 echo
 
-echo "2. Создаем предложение от test_citizen"
+echo "1b. Просмотр Сводa (каталог услуг)"
+curl -s -H "X-API-Key: $API_KEY" \
+  "$BASE_URL/svod" | jq '.'
+echo
+
+echo "2. Создаем предложение от test_citizen (услуга из Свода WEB_DEV, мин. цена 100 QZ)"
 curl -s -X POST "$BASE_URL/exchange/offer" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"service": "Web Development", "price": 100, "quantity": 5}' | jq '.'
+  -d '{"svod_code": "WEB_DEV", "price": 100, "quantity": 5}' | jq '.'
 echo
 
 echo "3. Получаем все активные предложения"

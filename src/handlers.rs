@@ -6,13 +6,13 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use chrono::Utc;
-use reqwest::Client;
 use tokio::time;
 
-use crate::auth::{internal_node_signature, node_secret, AuthContext};
+use crate::auth::{internal_node_signature, AuthContext};
 use crate::block_producer;
-use crate::blockchain::{self, compute_event_hash};
+use crate::blockchain::compute_event_hash;
 use crate::gossip;
+use crate::keys;
 use crate::models::{AddEventRequest, Block, Event};
 use crate::nodes::Node;
 use crate::pending;
@@ -50,7 +50,7 @@ pub async fn add_event(
     event.hash = Some(hash);
 
     match pending::insert(&state.db, &event).await {
-        Ok(()) => {
+        Ok(pending::PendingInsertResult::Inserted) => {
             let count = pending::count(&state.db).await.unwrap_or(0);
             tracing::info!(event_id = %event.event_id, pending = count, "event added");
             let state_gossip = state.clone();
@@ -66,6 +66,16 @@ pub async fn add_event(
                 "event_id": event.event_id,
                 "pending_count": count,
                 "message": format!("Event added ({} events waiting)", count),
+            })))
+            .into_response()
+        }
+        Ok(pending::PendingInsertResult::AlreadyExists) => {
+            let count = pending::count(&state.db).await.unwrap_or(0);
+            tracing::debug!(event_id = %event.event_id, "event already in pending");
+            Json(ApiResponse::success(serde_json::json!({
+                "event_id": event.event_id,
+                "pending_count": count,
+                "message": "Event already in pending queue",
             })))
             .into_response()
         }
@@ -127,7 +137,7 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<ApiResponse> {
         .await
         .unwrap_or_default();
     let (effective_producer, designated_producer, producer_fallback) =
-        block_producer::resolve_block_producer(&state, next_block as u64, &nodes).await;
+        block_producer::resolve_block_producer(&state, next_block as u64, &nodes);
 
     Json(ApiResponse::success(serde_json::json!({
         "version": "0.7.0",
@@ -238,6 +248,51 @@ pub async fn offline_handler(
     .into_response()
 }
 
+/// Citizens marked online within the last 5 minutes.
+pub async fn list_online_citizens(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    if auth.is_node {
+        return response::forbidden("Node credentials cannot list online citizens");
+    }
+
+    let cutoff = Utc::now().timestamp() - 300;
+    let rows: Vec<(String, String, i64)> = match sqlx::query_as(
+        r#"
+        SELECT c.id, c.name, cs.last_seen
+        FROM citizen_status cs
+        JOIN citizens c ON c.id = cs.citizen_id
+        WHERE cs.status = 'online' AND cs.last_seen >= $1
+        ORDER BY cs.last_seen DESC
+        "#,
+    )
+    .bind(cutoff)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => return response::internal_error(format!("Failed to list online citizens: {}", e)),
+    };
+
+    let citizens: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|(id, name, last_seen)| {
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "last_seen": last_seen,
+            })
+        })
+        .collect();
+
+    Json(ApiResponse::success(serde_json::json!({
+        "citizens": citizens,
+        "total": citizens.len(),
+    })))
+    .into_response()
+}
+
 pub async fn cast_vote_handler(
     Extension(auth): Extension<AuthContext>,
     State(state): State<Arc<AppState>>,
@@ -338,7 +393,7 @@ pub async fn add_peer_to_network(
     }
 
     match pending::insert(&state.db, &event).await {
-        Ok(()) => {
+        Ok(pending::PendingInsertResult::Inserted) => {
             tracing::info!(event_id = %event.event_id, "peer event added to pending");
             let state_gossip = state.clone();
             let event_gossip = event.clone();
@@ -353,6 +408,12 @@ pub async fn add_peer_to_network(
                 "message": "Peer will be added to network via blockchain"
             })))
         }
+        Ok(pending::PendingInsertResult::AlreadyExists) => {
+            tracing::debug!(event_id = %event.event_id, "peer event already pending");
+            Json(ApiResponse::success(serde_json::json!({
+                "message": "Peer event already in pending queue"
+            })))
+        }
         Err(e) => {
             tracing::error!(error = %e, "failed to add peer event");
             Json(ApiResponse::error(e))
@@ -363,76 +424,18 @@ pub async fn add_peer_to_network(
 pub async fn background_sync(state: Arc<AppState>) {
     let policy = block_producer::BlockPolicy::from_env();
     let mut interval = time::interval(Duration::from_secs(policy.sync_interval_secs));
-    let client = Client::new();
 
     loop {
         interval.tick().await;
         tracing::debug!("background sync tick");
 
+        tracing::debug!(node_id = %state.node_id, "background sync: syncing blocks from peers");
+        block_producer::sync_blocks_from_peers(&state).await;
+
         tracing::debug!(node_id = %state.node_id, "background sync: attempting block production");
         block_producer::try_create_block(state.clone()).await;
 
-        let peers = state.node_registry.get_all_nodes().await.unwrap_or_default();
-        let my_id = state.node_id.clone();
-        let pool = state.db.clone();
-
-        for peer in peers {
-            if peer.id == my_id {
-                continue;
-            }
-
-            tracing::debug!(peer_id = %peer.id, url = %peer.url, "fetching blocks from peer");
-            match client
-                .get(format!("{}/blocks", peer.url))
-                .header("Authorization", format!("Bearer {}", node_secret()))
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    if let Ok(body) = response.json::<ApiResponse>().await {
-                        if let Some(mut blocks) = response::decode_data::<Vec<Block>>(&body) {
-                            blocks.sort_by_key(|b| b.block_number);
-                            for block in blocks {
-                                match blockchain::classify_block(&block, &pool).await {
-                                    blockchain::SyncBlockAction::Skip => {
-                                        tracing::debug!(
-                                            block = block.block_number,
-                                            peer = %peer.id,
-                                            "block already synced"
-                                        );
-                                    }
-                                    blockchain::SyncBlockAction::Reject(reason) => {
-                                        tracing::warn!(
-                                            block = block.block_number,
-                                            peer = %peer.id,
-                                            reason = %reason,
-                                            "block rejected"
-                                        );
-                                    }
-                                    blockchain::SyncBlockAction::Insert => {
-                                        match blockchain::insert_synced_block(&pool, &block).await {
-                                            Ok(()) => tracing::info!(
-                                                block = block.block_number,
-                                                peer = %peer.id,
-                                                "block synced"
-                                            ),
-                                            Err(e) => tracing::error!(
-                                                block = block.block_number,
-                                                peer = %peer.id,
-                                                error = %e,
-                                                "failed to insert synced block"
-                                            ),
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => tracing::warn!(peer = %peer.url, error = %e, "failed to connect to peer"),
-            }
-        }
+        keys::sync_keys_from_peers(&state).await;
     }
 }
 

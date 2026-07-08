@@ -11,11 +11,53 @@ export QUAZAR_NODE_SECRET="${QUAZAR_NODE_SECRET:-QUAZAR_NODE_SECRET_CI}"
 export QUAZAR_REG_SECRET="${QUAZAR_REG_SECRET:-QUAZAR_REG_SECRET_CI}"
 export QUAZAR_INIT_TEST_KEYS="${QUAZAR_INIT_TEST_KEYS:-true}"
 export QUAZAR_PORT="${QUAZAR_PORT:-8080}"
+export QUAZAR_NODE_ID="${QUAZAR_NODE_ID:-QZ-NODE-2}"
+export QUAZAR_BLOCK_MIN_EVENTS="${QUAZAR_BLOCK_MIN_EVENTS:-1}"
+export QUAZAR_FORCE_PRODUCER="${QUAZAR_FORCE_PRODUCER:-true}"
 if [ "${SMOKE_USE_RANDOM_PORT:-1}" = "1" ]; then
   export QUAZAR_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')"
 fi
 BASE_URL="http://127.0.0.1:${QUAZAR_PORT}"
 SMOKE_NAME="smoke$(python3 -c 'import random,string; print("".join(random.choices(string.ascii_lowercase, k=8)))')"
+
+wait_for_citizen() {
+  local name="$1"
+  local id=""
+  for _ in $(seq 1 35); do
+    id=$(curl -sf "$BASE_URL/citizen/list" \
+      -H "Authorization: Bearer $QUAZAR_MASTER_KEY" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for c in d.get('data', {}).get('citizens', []):
+    if c.get('name') == '${name}':
+        print(c.get('id', ''))
+        break
+")
+    if [ -n "$id" ]; then
+      echo "$id"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Citizen ${name} not found in registry within 35s" >&2
+  return 1
+}
+
+ensure_registered_citizen() {
+  local name="$1"
+  local pubkey="$2"
+  local list
+  list=$(curl -sf "$BASE_URL/citizen/list" -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
+  if echo "$list" | grep -q "\"name\":\"${name}\""; then
+    return 0
+  fi
+  curl -sf -X POST "$BASE_URL/citizen/register" \
+    -H "Authorization: Bearer $QUAZAR_MASTER_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"name\":\"${name}\",\"public_key\":\"${pubkey}\",\"role\":\"Citizen\",\"birth_place\":\"SmokeCity\"}" \
+    | grep -q '"status":"success"'
+  wait_for_citizen "$name" >/dev/null
+}
 
 PG_HOST="${PG_HOST:-localhost}"
 PG_PORT="${PG_PORT:-5432}"
@@ -130,20 +172,72 @@ REGISTER=$(curl -sf -X POST "$BASE_URL/citizen/register" \
 
 echo "$REGISTER" | grep -q '"status":"success"'
 
+SMOKE_ID=$(wait_for_citizen "$SMOKE_NAME")
+echo "Registered smoke citizen: ${SMOKE_ID}"
+
 EVENTS=$(curl -sf "$BASE_URL/events" \
   -H "Authorization: Bearer $QUAZAR_NODE_SECRET")
 
 echo "$EVENTS" | grep -q '"status":"success"'
-echo "$EVENTS" | grep -q 'CitizenAdded'
-echo "$EVENTS" | grep -q "$SMOKE_NAME"
 
 BLOCKS=$(curl -sf "$BASE_URL/blocks" \
   -H "Authorization: Bearer $QUAZAR_NODE_SECRET")
 echo "$BLOCKS" | grep -q '"status":"success"'
+echo "$BLOCKS" | grep -q "$SMOKE_NAME"
 
 KEYS=$(curl -sf "$BASE_URL/keys" \
   -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
 echo "$KEYS" | grep -q '"status":"success"'
 echo "$KEYS" | grep -q 'test_citizen'
+
+SVOD=$(curl -sf "$BASE_URL/svod" \
+  -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
+echo "$SVOD" | grep -q '"status":"success"'
+echo "$SVOD" | grep -q 'WEB_DEV'
+
+SVOD_CAT=$(curl -sf "$BASE_URL/svod/categories" \
+  -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
+echo "$SVOD_CAT" | grep -q '"status":"success"'
+echo "$SVOD_CAT" | grep -q 'IT'
+
+# Candidacy: nominate → vote (For) → appoint (if Approved)
+ensure_registered_citizen "test_citizen" "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f8077986"
+ensure_registered_citizen "buyer_citizen" "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+
+CANDIDATE_ID=$(wait_for_citizen "$SMOKE_NAME")
+echo "Candidacy candidate: ${CANDIDATE_ID}"
+
+NOMINATE=$(curl -sf -X POST "$BASE_URL/candidacy/nominate" \
+  -H "Authorization: Bearer test_citizen_key_2026" \
+  -H "Content-Type: application/json" \
+  -d "{\"candidate_id\": \"${CANDIDATE_ID}\", \"target_role\": \"Guardian\"}")
+
+echo "$NOMINATE" | grep -q '"status":"success"'
+
+CANDIDACY_ID=$(echo "$NOMINATE" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
+echo "Candidacy id: ${CANDIDACY_ID}"
+
+VOTE=$(curl -sf -X POST "$BASE_URL/candidacy/${CANDIDACY_ID}/vote" \
+  -H "Authorization: Bearer buyer_key_2026" \
+  -H "Content-Type: application/json" \
+  -d '{"vote":"For"}')
+
+echo "$VOTE" | grep -q '"status":"success"'
+
+CAND_STATUS=$(echo "$VOTE" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['status'])")
+echo "Candidacy status after vote: ${CAND_STATUS}"
+
+if [ "$CAND_STATUS" = "Approved" ]; then
+  APPOINT=$(curl -sf -X POST "$BASE_URL/candidacy/${CANDIDACY_ID}/appoint" \
+    -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
+  echo "$APPOINT" | grep -q '"status":"success"'
+  echo "$APPOINT" | grep -q '"status":"Appointed"'
+  echo "Candidacy appointed"
+fi
+
+CAND_LIST=$(curl -sf "$BASE_URL/candidacy/list" \
+  -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
+echo "$CAND_LIST" | grep -q '"status":"success"'
+echo "$CAND_LIST" | grep -q "$CANDIDACY_ID"
 
 echo "Smoke test passed"

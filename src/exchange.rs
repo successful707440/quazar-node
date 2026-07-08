@@ -6,12 +6,13 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthContext;
 use crate::response::ApiResponse;
+use crate::svod;
 use crate::AppState;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -50,6 +51,7 @@ pub struct Offer {
     pub id: String,
     pub seller: String,
     pub service: String,
+    pub svod_code: Option<String>,
     pub price: i64,
     pub quantity: i64,
     pub status: String,
@@ -62,6 +64,7 @@ impl Offer {
             "id": self.id,
             "seller": self.seller,
             "service": self.service,
+            "svod_code": self.svod_code,
             "price": self.price,
             "quantity": self.quantity,
             "status": self.status,
@@ -83,7 +86,7 @@ pub struct Order {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateOfferRequest {
-    pub service: String,
+    pub svod_code: String,
     pub price: u64,
     pub quantity: u64,
 }
@@ -187,6 +190,26 @@ async fn get_balance(pool: &PgPool, citizen_id: &str) -> Result<u64, ExchangeErr
     }
 }
 
+async fn lock_balance_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    citizen_id: &str,
+) -> Result<i64, ExchangeError> {
+    sqlx::query(
+        "INSERT INTO balances (citizen_id, amount) VALUES ($1, 0)
+         ON CONFLICT (citizen_id) DO NOTHING",
+    )
+    .bind(citizen_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    sqlx::query_scalar("SELECT amount FROM balances WHERE citizen_id = $1 FOR UPDATE")
+        .bind(citizen_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))
+}
+
 pub async fn create_offer(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -199,8 +222,8 @@ pub async fn create_offer(
     }
     let seller = auth.resolve_account_id(&state.db).await;
 
-    if request.service.is_empty() {
-        return Err(ExchangeError::BadRequest("Service name is required".to_string()));
+    if request.svod_code.trim().is_empty() {
+        return Err(ExchangeError::BadRequest("svod_code is required".to_string()));
     }
     if request.price == 0 {
         return Err(ExchangeError::BadRequest("Price must be greater than 0".to_string()));
@@ -209,16 +232,41 @@ pub async fn create_offer(
         return Err(ExchangeError::BadRequest("Quantity must be greater than 0".to_string()));
     }
 
+    let catalog_item =
+        svod::get_service_by_code(&state.db, &request.svod_code, true).await.map_err(|e| {
+            ExchangeError::BadRequest(format!("Service not in Svod catalog: {e}"))
+        })?;
+
+    if request.price < catalog_item.base_price as u64 {
+        return Err(ExchangeError::BadRequest(format!(
+            "Price must be at least {} QZ (base_price from Svod)",
+            catalog_item.base_price
+        )));
+    }
+    if request.quantity < catalog_item.min_quantity as u64 {
+        return Err(ExchangeError::BadRequest(format!(
+            "Quantity must be at least {} (Svod min_quantity)",
+            catalog_item.min_quantity
+        )));
+    }
+    if request.quantity > catalog_item.max_quantity as u64 {
+        return Err(ExchangeError::BadRequest(format!(
+            "Quantity must be at most {} (Svod max_quantity)",
+            catalog_item.max_quantity
+        )));
+    }
+
     let offer_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().timestamp();
 
     sqlx::query(
-        "INSERT INTO offers (id, seller, service, price, quantity, status, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        "INSERT INTO offers (id, seller, service, svod_code, price, quantity, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(&offer_id)
     .bind(&seller)
-    .bind(&request.service)
+    .bind(&catalog_item.name)
+    .bind(&catalog_item.code)
     .bind(request.price as i64)
     .bind(request.quantity as i64)
     .bind(OfferStatus::Active.as_str())
@@ -229,6 +277,8 @@ pub async fn create_offer(
 
     Ok(Json(ApiResponse::success(serde_json::json!({
         "offer_id": offer_id,
+        "svod_code": catalog_item.code,
+        "service": catalog_item.name,
         "message": "Offer created successfully"
     }))))
 }
@@ -241,7 +291,7 @@ pub async fn get_offers(
         (Some(status), Some(service)) => {
             let pattern = format!("%{}%", service);
             sqlx::query_as::<_, Offer>(
-                "SELECT id, seller, service, price, quantity, status, created_at FROM offers
+                "SELECT id, seller, service, svod_code, price, quantity, status, created_at FROM offers
                  WHERE status = $1 AND service LIKE $2 ORDER BY created_at DESC",
             )
             .bind(status)
@@ -251,7 +301,7 @@ pub async fn get_offers(
         }
         (Some(status), None) => {
             sqlx::query_as::<_, Offer>(
-                "SELECT id, seller, service, price, quantity, status, created_at FROM offers
+                "SELECT id, seller, service, svod_code, price, quantity, status, created_at FROM offers
                  WHERE status = $1 ORDER BY created_at DESC",
             )
             .bind(status)
@@ -261,7 +311,7 @@ pub async fn get_offers(
         (None, Some(service)) => {
             let pattern = format!("%{}%", service);
             sqlx::query_as::<_, Offer>(
-                "SELECT id, seller, service, price, quantity, status, created_at FROM offers
+                "SELECT id, seller, service, svod_code, price, quantity, status, created_at FROM offers
                  WHERE service LIKE $1 ORDER BY created_at DESC",
             )
             .bind(pattern)
@@ -270,7 +320,7 @@ pub async fn get_offers(
         }
         (None, None) => {
             sqlx::query_as::<_, Offer>(
-                "SELECT id, seller, service, price, quantity, status, created_at FROM offers
+                "SELECT id, seller, service, svod_code, price, quantity, status, created_at FROM offers
                  ORDER BY created_at DESC",
             )
             .fetch_all(&state.db)
@@ -289,7 +339,7 @@ pub async fn get_offer_by_id(
     Path(offer_id): Path<String>,
 ) -> ExchangeResult<Json<ApiResponse>> {
     let offer = sqlx::query_as::<_, Offer>(
-        "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE id = $1",
+        "SELECT id, seller, service, svod_code, price, quantity, status, created_at FROM offers WHERE id = $1",
     )
     .bind(&offer_id)
     .fetch_optional(&state.db)
@@ -306,7 +356,7 @@ pub async fn cancel_offer(
     Path(offer_id): Path<String>,
 ) -> ExchangeResult<Json<ApiResponse>> {
     let offer = sqlx::query_as::<_, Offer>(
-        "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE id = $1",
+        "SELECT id, seller, service, svod_code, price, quantity, status, created_at FROM offers WHERE id = $1",
     )
     .bind(&offer_id)
     .fetch_optional(&state.db)
@@ -355,11 +405,18 @@ pub async fn create_order(
         return Err(ExchangeError::BadRequest("Quantity must be greater than 0".to_string()));
     }
 
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
     let offer = sqlx::query_as::<_, Offer>(
-        "SELECT id, seller, service, price, quantity, status, created_at FROM offers WHERE id = $1 AND status = 'active'",
+        "SELECT id, seller, service, svod_code, price, quantity, status, created_at
+         FROM offers WHERE id = $1 AND status = 'active' FOR UPDATE",
     )
     .bind(&request.offer_id)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?
     .ok_or_else(|| {
@@ -374,10 +431,13 @@ pub async fn create_order(
     }
 
     let total_price = (request.quantity as i64) * offer.price;
-    let buyer_balance = get_balance(&state.db, &buyer).await?;
-    if buyer_balance < total_price as u64 {
+
+    let buyer_balance = lock_balance_in_tx(&mut tx, &buyer).await?;
+    if buyer_balance < total_price {
         return Err(ExchangeError::InsufficientBalance);
     }
+
+    lock_balance_in_tx(&mut tx, &offer.seller).await?;
 
     let order_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().timestamp();
@@ -387,12 +447,6 @@ pub async fn create_order(
     } else {
         OfferStatus::Active.as_str()
     };
-
-    let mut tx = state
-        .db
-        .begin()
-        .await
-        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
 
     sqlx::query("UPDATE balances SET amount = amount - $1 WHERE citizen_id = $2")
         .bind(total_price)

@@ -7,8 +7,9 @@ use reqwest::Client;
 use sqlx::PgPool;
 
 use crate::auth::node_secret;
-use crate::blockchain::compute_block_hash;
+use crate::blockchain::{self, compute_block_hash, SyncBlockAction};
 use crate::nodes::{Node, NodeStatus};
+use crate::response::{self, ApiResponse};
 use crate::pending;
 use crate::models::{Block, Event};
 use crate::AppState;
@@ -42,6 +43,8 @@ pub fn producer_id_for_block(block_number: u64, nodes: &[Node]) -> Option<String
     let mut alive: Vec<&Node> = nodes
         .iter()
         .filter(|n| n.status == NodeStatus::Alive)
+        // Ghost entries from default QUAZAR_NODE_ID / localhost bootstrap in old blocks.
+        .filter(|n| !n.url.contains("localhost"))
         .collect();
     alive.sort_by(|a, b| a.id.cmp(&b.id));
     if alive.is_empty() {
@@ -51,45 +54,10 @@ pub fn producer_id_for_block(block_number: u64, nodes: &[Node]) -> Option<String
     Some(alive[idx].id.clone())
 }
 
-async fn producer_node_reachable(nodes: &[Node], producer_id: &str) -> bool {
-    let Some(node) = nodes.iter().find(|n| n.id == producer_id) else {
-        return false;
-    };
-    if node.status != NodeStatus::Alive {
-        return false;
-    }
-    let url = format!("{}/status", node.url.trim_end_matches('/'));
-    match Client::new()
-        .get(&url)
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => true,
-        Ok(resp) => {
-            tracing::debug!(
-                producer = %producer_id,
-                url = %url,
-                status = %resp.status(),
-                "designated block producer not reachable"
-            );
-            false
-        }
-        Err(e) => {
-            tracing::debug!(
-                producer = %producer_id,
-                url = %url,
-                error = %e,
-                "designated block producer not reachable"
-            );
-            false
-        }
-    }
-}
-
-/// Round-robin producer, with fallback to the current node when no peers are alive or the
-/// designated producer cannot be reached (stale bootstrap entry, single-node setup, etc.).
-pub async fn resolve_block_producer(
+/// Round-robin producer. Fallback to the current node only when no peers are alive or the
+/// designated node is marked dead (single-node / stale bootstrap). A temporarily unreachable
+/// but alive designated producer is never replaced — avoids competing forks.
+pub fn resolve_block_producer(
     state: &AppState,
     block_number: u64,
     nodes: &[Node],
@@ -106,24 +74,180 @@ pub async fn resolve_block_producer(
             );
             state.node_id.clone()
         }
-        Some(id) if id == state.node_id => state.node_id.clone(),
-        Some(id) => {
-            if producer_node_reachable(nodes, id).await {
-                id.to_string()
-            } else {
-                tracing::info!(
-                    block = block_number,
-                    designated = %id,
-                    node_id = %state.node_id,
-                    "block producer fallback: designated node unreachable, current node will produce"
-                );
-                state.node_id.clone()
-            }
+        Some(id)
+            if !nodes
+                .iter()
+                .any(|n| n.id == id && n.status == NodeStatus::Alive) =>
+        {
+            tracing::info!(
+                block = block_number,
+                designated = %id,
+                node_id = %state.node_id,
+                "block producer fallback: designated node not alive, current node will produce"
+            );
+            state.node_id.clone()
         }
+        Some(id) if id == state.node_id => state.node_id.clone(),
+        Some(id) => id.to_string(),
     };
 
     let used_fallback = designated.as_deref() != Some(producer.as_str());
     (producer, designated, used_fallback)
+}
+
+pub async fn sync_blocks_from_peers(state: &Arc<AppState>) {
+    let client = Client::new();
+    let nodes = match state.node_registry.get_all_nodes().await {
+        Ok(nodes) => nodes,
+        Err(e) => {
+            tracing::warn!(error = %e, "block sync: failed to load peers");
+            return;
+        }
+    };
+    let my_id = state.node_id.clone();
+    let pool = state.db.clone();
+    for peer in &nodes {
+        if peer.id == my_id || peer.status != NodeStatus::Alive {
+            continue;
+        }
+
+        tracing::debug!(peer_id = %peer.id, url = %peer.url, "fetching blocks from peer");
+        let response = match client
+            .get(format!("{}/blocks", peer.url))
+            .header("Authorization", format!("Bearer {}", node_secret()))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                tracing::warn!(peer = %peer.url, error = %e, "failed to connect to peer");
+                continue;
+            }
+        };
+
+        let body = match response.json::<ApiResponse>().await {
+            Ok(body) => body,
+            Err(e) => {
+                tracing::warn!(peer = %peer.url, error = %e, "failed to parse peer blocks response");
+                continue;
+            }
+        };
+
+        let Some(mut blocks) = response::decode_data::<Vec<Block>>(&body) else {
+            continue;
+        };
+        blocks.sort_by_key(|b| b.block_number);
+
+        let local_blocks = blockchain::load_blocks_from_db(&pool).await.unwrap_or_default();
+        let mut reconciled = false;
+        for block in &blocks {
+            match blockchain::classify_block(block, &pool).await {
+                SyncBlockAction::Skip => {
+                    tracing::debug!(
+                        block = block.block_number,
+                        peer = %peer.id,
+                        "block already synced"
+                    );
+                }
+                SyncBlockAction::Reject(reason) => {
+                    if reason.contains("already exists with a different hash") {
+                        if let Some(fork_block) = blockchain::block_number_from_reject(&reason) {
+                            let designated = producer_id_for_block(fork_block, &nodes);
+                            let we_are_designated = designated.as_deref() == Some(my_id.as_str());
+                            let peer_is_designated =
+                                designated.as_deref() == Some(peer.id.as_str());
+
+                            if we_are_designated
+                                && blockchain::chains_share_prefix(
+                                    &local_blocks,
+                                    &blocks,
+                                    fork_block,
+                                )
+                            {
+                                tracing::warn!(
+                                    fork = fork_block,
+                                    peer = %peer.id,
+                                    "designated producer self-healing chain from peer copy"
+                                );
+                                match blockchain::adopt_peer_suffix(&pool, fork_block, &blocks)
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        tracing::info!(
+                                            fork = fork_block,
+                                            peer = %peer.id,
+                                            "chain self-healed from peer"
+                                        );
+                                        reconciled = true;
+                                        break;
+                                    }
+                                    Err(e) => tracing::error!(
+                                        fork = fork_block,
+                                        peer = %peer.id,
+                                        error = %e,
+                                        "chain self-heal failed"
+                                    ),
+                                }
+                            } else if peer_is_designated && !we_are_designated {
+                                tracing::info!(
+                                    fork = fork_block,
+                                    peer = %peer.id,
+                                    "fork detected; waiting for designated producer to publish canonical chain"
+                                );
+                            } else {
+                                tracing::warn!(
+                                    block = block.block_number,
+                                    peer = %peer.id,
+                                    reason = %reason,
+                                    "block rejected at fork"
+                                );
+                            }
+                        } else {
+                            tracing::warn!(
+                                block = block.block_number,
+                                peer = %peer.id,
+                                reason = %reason,
+                                "block rejected"
+                            );
+                        }
+                    } else {
+                        tracing::warn!(
+                            block = block.block_number,
+                            peer = %peer.id,
+                            reason = %reason,
+                            "block rejected"
+                        );
+                    }
+                }
+                SyncBlockAction::Insert => {
+                    match blockchain::insert_synced_block(&pool, block).await {
+                        Ok(()) => tracing::info!(
+                            block = block.block_number,
+                            peer = %peer.id,
+                            "block synced"
+                        ),
+                        Err(e) => tracing::error!(
+                            block = block.block_number,
+                            peer = %peer.id,
+                            error = %e,
+                            "failed to insert synced block"
+                        ),
+                    }
+                }
+            }
+        }
+
+        if reconciled {
+            apply_peer_list_updates_from_blocks(state, &blocks).await;
+        }
+    }
+}
+
+async fn apply_peer_list_updates_from_blocks(state: &AppState, blocks: &[Block]) {
+    for block in blocks {
+        apply_peer_list_updates(state, block).await;
+    }
 }
 
 async fn confirmed_event_ids(pool: &PgPool) -> HashSet<String> {
@@ -434,9 +558,14 @@ pub async fn try_create_block(state: Arc<AppState>) {
         .filter(|n| n.status == NodeStatus::Alive)
         .count();
     let (producer, designated, used_fallback) =
-        resolve_block_producer(&state, next_block_number as u64, &nodes).await;
+        resolve_block_producer(&state, next_block_number as u64, &nodes);
 
-    if producer != state.node_id {
+    let force_producer = std::env::var("QUAZAR_FORCE_PRODUCER")
+        .ok()
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+
+    if !force_producer && producer != state.node_id {
         tracing::info!(
             block = next_block_number,
             designated = ?designated,

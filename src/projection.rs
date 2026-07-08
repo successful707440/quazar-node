@@ -15,6 +15,10 @@ pub async fn apply_event_projections_in_tx(
             "CitizenSuspended" => apply_citizen_status(tx, event, "suspended").await?,
             "CitizenRestored" => apply_citizen_status(tx, event, "active").await?,
             "CitizenUpdated" => apply_citizen_updated(tx, event).await?,
+            "CandidateNominated" => apply_candidate_nominated(tx, event).await?,
+            "CandidateVoted" => apply_candidate_voted(tx, event).await?,
+            "CandidateApproved" => apply_candidate_approved(tx, event).await?,
+            "CandidateAppointed" => apply_candidate_appointed(tx, event).await?,
             _ => {}
         }
     }
@@ -48,6 +52,24 @@ async fn apply_citizen_added(
         .unwrap_or("Citizen");
     let role = Role::from_str(role_str)
         .ok_or_else(|| format!("CitizenAdded: invalid role {}", role_str))?;
+
+    let name_taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM citizens WHERE name = $1)",
+    )
+    .bind(citizen_name)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| format!("CitizenAdded name check failed for {}: {}", citizen_id, e))?;
+
+    if name_taken {
+        tracing::warn!(
+            citizen_id = %citizen_id,
+            name = %citizen_name,
+            event_id = %event.event_id,
+            "CitizenAdded skipped: name already registered"
+        );
+        return Ok(());
+    }
 
     sqlx::query(
         r#"
@@ -184,6 +206,176 @@ async fn apply_citizen_updated(
     tx: &mut Transaction<'_, Postgres>,
     event: &Event,
 ) -> Result<(), String> {
-    let status = require_str(&event.data, "status")?;
-    apply_citizen_status(tx, event, status).await
+    if event.data.get("status").is_some() {
+        let status = require_str(&event.data, "status")?;
+        apply_citizen_status(tx, event, status).await?;
+    }
+
+    if event.data.get("role").is_some() {
+        let citizen_id = require_str(&event.data, "citizen_id")?;
+        let role_str = require_str(&event.data, "role")?;
+        let role = Role::from_str(role_str)
+            .ok_or_else(|| format!("CitizenUpdated: invalid role {}", role_str))?;
+
+        sqlx::query("UPDATE citizens SET role = $1 WHERE id = $2")
+            .bind(role.as_str())
+            .bind(citizen_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| format!("CitizenUpdated role projection failed for {}: {}", citizen_id, e))?;
+
+        sqlx::query(
+            "UPDATE api_keys SET role = $1 WHERE citizen_name = (SELECT name FROM citizens WHERE id = $2)",
+        )
+        .bind(role.as_str())
+        .bind(citizen_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("CitizenUpdated api_keys sync failed for {}: {}", citizen_id, e))?;
+
+        tracing::info!(
+            citizen_id = %citizen_id,
+            role = %role.as_str(),
+            event_id = %event.event_id,
+            "citizen role projected to SQL"
+        );
+    }
+
+    Ok(())
+}
+
+async fn apply_candidate_nominated(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+) -> Result<(), String> {
+    let candidacy_id = require_str(&event.data, "candidacy_id")?;
+    let citizen_id = require_str(&event.data, "citizen_id")?;
+    let target_role = require_str(&event.data, "target_role")?;
+    let nominator_id = require_str(&event.data, "nominator_id")?;
+    let threshold = event
+        .data
+        .get("threshold")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1) as i32;
+
+    sqlx::query(
+        r#"
+        INSERT INTO candidacies (id, citizen_id, target_role, status, votes_for, votes_against, votes_abstain, threshold, nominator_id, created_at)
+        VALUES ($1, $2, $3, 'Active', 0, 0, 0, $4, $5, to_timestamp($6))
+        ON CONFLICT (id) DO NOTHING
+        "#,
+    )
+    .bind(candidacy_id)
+    .bind(citizen_id)
+    .bind(target_role)
+    .bind(threshold)
+    .bind(nominator_id)
+    .bind(event.timestamp as f64)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("CandidateNominated projection failed: {}", e))?;
+
+    tracing::info!(candidacy_id = %candidacy_id, event_id = %event.event_id, "CandidateNominated projected");
+    Ok(())
+}
+
+async fn apply_candidate_voted(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+) -> Result<(), String> {
+    let candidacy_id = require_str(&event.data, "candidacy_id")?;
+    let citizen_id = require_str(&event.data, "citizen_id")?;
+    let vote = require_str(&event.data, "vote")?;
+    let vote_id = format!("{}_{}", candidacy_id, citizen_id);
+
+    sqlx::query(
+        r#"
+        INSERT INTO candidacy_votes (id, candidacy_id, citizen_id, vote, created_at)
+        VALUES ($1, $2, $3, $4, to_timestamp($5))
+        ON CONFLICT (candidacy_id, citizen_id) DO UPDATE SET vote = EXCLUDED.vote
+        "#,
+    )
+    .bind(&vote_id)
+    .bind(candidacy_id)
+    .bind(citizen_id)
+    .bind(vote)
+    .bind(event.timestamp as f64)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("CandidateVoted projection failed: {}", e))?;
+
+    sqlx::query(
+        r#"
+        UPDATE candidacies SET
+            votes_for = (SELECT COUNT(*)::int FROM candidacy_votes WHERE candidacy_id = $1 AND vote = 'For'),
+            votes_against = (SELECT COUNT(*)::int FROM candidacy_votes WHERE candidacy_id = $1 AND vote = 'Against'),
+            votes_abstain = (SELECT COUNT(*)::int FROM candidacy_votes WHERE candidacy_id = $1 AND vote = 'Abstain')
+        WHERE id = $1
+        "#,
+    )
+    .bind(candidacy_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("CandidateVoted count refresh failed: {}", e))?;
+
+    tracing::info!(candidacy_id = %candidacy_id, voter = %citizen_id, event_id = %event.event_id, "CandidateVoted projected");
+    Ok(())
+}
+
+async fn apply_candidate_approved(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+) -> Result<(), String> {
+    let candidacy_id = require_str(&event.data, "candidacy_id")?;
+
+    sqlx::query(
+        "UPDATE candidacies SET status = 'Approved', approved_at = to_timestamp($1) WHERE id = $2",
+    )
+    .bind(event.timestamp as f64)
+    .bind(candidacy_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("CandidateApproved projection failed: {}", e))?;
+
+    tracing::info!(candidacy_id = %candidacy_id, event_id = %event.event_id, "CandidateApproved projected");
+    Ok(())
+}
+
+async fn apply_candidate_appointed(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+) -> Result<(), String> {
+    let candidacy_id = require_str(&event.data, "candidacy_id")?;
+    let citizen_id = require_str(&event.data, "citizen_id")?;
+    let target_role = require_str(&event.data, "target_role")?;
+    let role = Role::from_str(target_role)
+        .ok_or_else(|| format!("CandidateAppointed: invalid role {}", target_role))?;
+
+    sqlx::query(
+        "UPDATE candidacies SET status = 'Appointed', appointed_at = to_timestamp($1) WHERE id = $2",
+    )
+    .bind(event.timestamp as f64)
+    .bind(candidacy_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("CandidateAppointed candidacy update failed: {}", e))?;
+
+    sqlx::query("UPDATE citizens SET role = $1 WHERE id = $2")
+        .bind(role.as_str())
+        .bind(citizen_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| format!("CandidateAppointed role projection failed: {}", e))?;
+
+    sqlx::query(
+        "UPDATE api_keys SET role = $1 WHERE citizen_name = (SELECT name FROM citizens WHERE id = $2)",
+    )
+    .bind(role.as_str())
+    .bind(citizen_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| format!("CandidateAppointed api_keys sync failed: {}", e))?;
+
+    tracing::info!(candidacy_id = %candidacy_id, citizen_id = %citizen_id, event_id = %event.event_id, "CandidateAppointed projected");
+    Ok(())
 }

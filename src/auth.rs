@@ -188,6 +188,16 @@ impl KeyStore {
             .collect())
     }
 
+    pub async fn list_active_full(pool: &PgPool) -> Result<Vec<ApiKey>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ApiKeyRow>(
+            "SELECT key, role, citizen_name FROM api_keys WHERE is_active = TRUE ORDER BY created_at",
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows.into_iter().map(ApiKey::from).collect())
+    }
+
     pub async fn sync_from_env(pool: &PgPool) -> Result<(), sqlx::Error> {
         sync_env_keys(pool).await?;
         sync_test_keys(pool).await?;
@@ -305,12 +315,20 @@ impl AuthContext {
         !self.is_node && (self.is_master || self.role == Role::Aiya)
     }
 
+    pub fn can_manage_svod(&self) -> bool {
+        !self.is_node && (self.is_master || self.role == Role::Aiya)
+    }
+
     pub fn can_assign_elevated_role(&self) -> bool {
         !self.is_node && (self.is_master || matches!(self.role, Role::Aiya | Role::Guardian))
     }
 
     pub fn can_manage_citizens(&self) -> bool {
         !self.is_node && (self.is_master || matches!(self.role, Role::Aiya | Role::Guardian))
+    }
+
+    pub fn can_change_citizen_role(&self) -> bool {
+        !self.is_node && (self.is_master || self.role == Role::Aiya)
     }
 
     pub fn can_manage_api_keys(&self) -> bool {

@@ -41,6 +41,7 @@ services:
       QUAZAR_NODE_SECRET: QUAZAR_NODE_SECRET_2026
       QUAZAR_REG_SECRET: QUAZAR_REG_SECRET_2026
       QUAZAR_INIT_TEST_KEYS: "true"
+      QUAZAR_API_KEYS: "successful_app_key_2026:Citizen:successful,alice_app_key_2026:Citizen:alice"
       QUAZAR_NODE_ID: QZ-NODE-1
       QUAZAR_NODE_URL: http://quazar-node:8080
       QUAZAR_PORT: "8080"
@@ -68,6 +69,7 @@ services:
       QUAZAR_NODE_SECRET: QUAZAR_NODE_SECRET_2026
       QUAZAR_REG_SECRET: QUAZAR_REG_SECRET_2026
       QUAZAR_INIT_TEST_KEYS: "true"
+      QUAZAR_API_KEYS: "successful_app_key_2026:Citizen:successful,alice_app_key_2026:Citizen:alice"
       QUAZAR_NODE_ID: QZ-NODE-2
       QUAZAR_NODE_URL: http://quazar-node-2:8080
       QUAZAR_PORT: "8080"

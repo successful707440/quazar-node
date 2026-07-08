@@ -81,6 +81,10 @@ pub enum QuazarEventType {
     VoteCast,
     VoteFinalized,
     PeerListUpdate,
+    CandidateNominated,
+    CandidateVoted,
+    CandidateApproved,
+    CandidateAppointed,
 }
 
 impl ToString for QuazarEventType {
@@ -133,6 +137,10 @@ impl QuazarEventType {
             "VoteCast" => Ok(QuazarEventType::VoteCast),
             "VoteFinalized" => Ok(QuazarEventType::VoteFinalized),
             "PeerListUpdate" => Ok(QuazarEventType::PeerListUpdate),
+            "CandidateNominated" => Ok(QuazarEventType::CandidateNominated),
+            "CandidateVoted" => Ok(QuazarEventType::CandidateVoted),
+            "CandidateApproved" => Ok(QuazarEventType::CandidateApproved),
+            "CandidateAppointed" => Ok(QuazarEventType::CandidateAppointed),
             _ => Err(format!("Unknown event type: {}", s)),
         }
     }
