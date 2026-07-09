@@ -1,0 +1,2307 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Квазар — цифровое государство без границ. Стань гражданином и строй будущее вместе с нами.">
+  <title>Квазар — Цифровое государство</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-deep: #050508;
+      --bg-card: rgba(12, 10, 18, 0.75);
+      --red: #e63946;
+      --red-glow: #ff2d55;
+      --gold: #d4a853;
+      --gold-light: #f0c96e;
+      --text: #e8e6f0;
+      --text-muted: #8a8698;
+      --border: rgba(212, 168, 83, 0.2);
+      --font-display: 'Segoe UI', system-ui, sans-serif;
+      --font-body: 'Segoe UI', system-ui, sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg-deep);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Starfield */
+    .starfield {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 80% 60% at 50% 0%, rgba(230, 57, 70, 0.08) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 80% 100%, rgba(212, 168, 83, 0.06) 0%, transparent 50%),
+        var(--bg-deep);
+    }
+
+    .stars, .stars2, .stars3 {
+      position: absolute;
+      inset: 0;
+      background-repeat: repeat;
+    }
+
+    .stars {
+      background-image:
+        radial-gradient(1px 1px at 20px 30px, #fff, transparent),
+        radial-gradient(1px 1px at 80px 120px, rgba(255,255,255,0.8), transparent),
+        radial-gradient(1.5px 1.5px at 150px 60px, #fff, transparent),
+        radial-gradient(1px 1px at 220px 180px, rgba(255,255,255,0.6), transparent),
+        radial-gradient(1px 1px at 300px 40px, #fff, transparent);
+      background-size: 350px 200px;
+      animation: drift 120s linear infinite;
+      opacity: 0.5;
+    }
+
+    .stars2 {
+      background-image:
+        radial-gradient(1px 1px at 50px 90px, rgba(212,168,83,0.9), transparent),
+        radial-gradient(1.5px 1.5px at 130px 20px, rgba(230,57,70,0.7), transparent),
+        radial-gradient(1px 1px at 200px 150px, #fff, transparent);
+      background-size: 280px 180px;
+      animation: drift 90s linear infinite reverse;
+      opacity: 0.35;
+    }
+
+    .stars3 {
+      background-image:
+        radial-gradient(2px 2px at 100px 100px, rgba(240,201,110,0.5), transparent),
+        radial-gradient(1px 1px at 250px 80px, rgba(255,255,255,0.4), transparent);
+      background-size: 400px 250px;
+      animation: drift 150s linear infinite;
+      opacity: 0.25;
+    }
+
+    @keyframes drift {
+      from { transform: translateY(0); }
+      to { transform: translateY(-200px); }
+    }
+
+    /* Layout */
+    .container {
+      width: 100%;
+      max-width: 1140px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    section { padding: 5rem 0; }
+
+    /* Header */
+    header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 1rem 0;
+      background: rgba(5, 5, 8, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      transition: box-shadow 0.3s;
+    }
+
+    header.scrolled { box-shadow: 0 4px 30px rgba(230, 57, 70, 0.1); }
+
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      max-width: 1140px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 700;
+      text-decoration: none;
+      color: var(--text);
+      letter-spacing: 0.05em;
+    }
+
+    .logo span {
+      background: linear-gradient(135deg, var(--red-glow), var(--gold-light));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    nav { display: flex; gap: 2rem; align-items: center; }
+
+    nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+      position: relative;
+    }
+
+    nav a::after {
+      content: '';
+      position: absolute;
+      bottom: -4px;
+      left: 0;
+      width: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--red), var(--gold));
+      transition: width 0.3s;
+    }
+
+    nav a:hover { color: var(--gold-light); }
+    nav a:hover::after { width: 100%; }
+
+    nav a.nav-register {
+      padding: 0.45rem 1rem;
+      border: 1px solid rgba(230, 57, 70, 0.35);
+      border-radius: 8px;
+      background: rgba(230, 57, 70, 0.12);
+      color: var(--gold-light);
+    }
+
+    nav a.nav-register::after { display: none; }
+
+    nav a.nav-register:hover {
+      color: #fff;
+      border-color: var(--red);
+      background: rgba(230, 57, 70, 0.25);
+    }
+
+    .menu-toggle {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text);
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0.25rem;
+    }
+
+    /* Hero */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding-top: 5rem;
+      position: relative;
+    }
+
+    .hero-content { max-width: 800px; animation: fadeUp 1s ease-out; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(30px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      font-size: 0.8rem;
+      color: var(--gold);
+      margin-bottom: 1.5rem;
+      background: rgba(212, 168, 83, 0.05);
+      animation: pulse-border 3s ease-in-out infinite;
+    }
+
+    @keyframes pulse-border {
+      0%, 100% { border-color: rgba(212, 168, 83, 0.2); }
+      50% { border-color: rgba(230, 57, 70, 0.4); }
+    }
+
+    .hero h1 {
+      font-size: clamp(2.2rem, 6vw, 3.8rem);
+      font-weight: 800;
+      line-height: 1.15;
+      margin-bottom: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+
+    .hero h1 .highlight {
+      display: block;
+      font-size: clamp(2.8rem, 8vw, 5rem);
+      background: linear-gradient(135deg, var(--red-glow) 0%, var(--gold-light) 50%, var(--red) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      background-size: 200% auto;
+      animation: shimmer 4s linear infinite;
+      filter: drop-shadow(0 0 40px rgba(230, 57, 70, 0.3));
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 0% center; }
+      100% { background-position: 200% center; }
+    }
+
+    .hero-subtitle {
+      font-size: clamp(1rem, 2.5vw, 1.25rem);
+      color: var(--text-muted);
+      max-width: 600px;
+      margin: 0 auto 1rem;
+    }
+
+    .motto {
+      font-style: italic;
+      color: var(--gold);
+      font-size: 1rem;
+      margin-bottom: 2rem;
+      opacity: 0.9;
+    }
+
+    .citizen-counter {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 2rem;
+      backdrop-filter: blur(8px);
+    }
+
+    .citizen-counter .count {
+      font-size: 2rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--gold-light), var(--red));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .citizen-counter .label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-align: left;
+      line-height: 1.3;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 1rem 2.25rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.2s, box-shadow 0.3s;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--red), #c1121f);
+      color: #fff;
+      box-shadow: 0 4px 25px rgba(230, 57, 70, 0.4);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 35px rgba(230, 57, 70, 0.55);
+    }
+
+    .btn-primary:active { transform: translateY(0); }
+
+    /* Section titles */
+    .section-header {
+      text-align: center;
+      margin-bottom: 3.5rem;
+    }
+
+    .section-header .tag {
+      display: inline-block;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--red);
+      margin-bottom: 0.75rem;
+    }
+
+    .section-header h2 {
+      font-size: clamp(1.75rem, 4vw, 2.5rem);
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+
+    .section-header p {
+      color: var(--text-muted);
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
+    /* Cards grid */
+    .cards-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      backdrop-filter: blur(8px);
+      transition: transform 0.3s, border-color 0.3s, box-shadow 0.3s;
+      opacity: 0;
+      transform: translateY(20px);
+    }
+
+    .card.visible {
+      opacity: 1;
+      transform: translateY(0);
+      transition: opacity 0.6s ease, transform 0.6s ease, border-color 0.3s, box-shadow 0.3s;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(230, 57, 70, 0.35);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4), 0 0 30px rgba(230, 57, 70, 0.08);
+    }
+
+    .card-icon {
+      font-size: 2.25rem;
+      margin-bottom: 1rem;
+      display: block;
+    }
+
+    .card h3 {
+      font-size: 1.15rem;
+      margin-bottom: 0.75rem;
+      color: var(--gold-light);
+    }
+
+    .card p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.65;
+    }
+
+    /* Benefits */
+    .benefits-list {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1.25rem;
+    }
+
+    .benefit-item {
+      text-align: center;
+      padding: 1.75rem 1rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      backdrop-filter: blur(8px);
+      transition: transform 0.3s, border-color 0.3s;
+      opacity: 0;
+      transform: scale(0.95);
+    }
+
+    .benefit-item.visible {
+      opacity: 1;
+      transform: scale(1);
+      transition: opacity 0.5s ease, transform 0.5s ease, border-color 0.3s;
+    }
+
+    .benefit-item:hover {
+      border-color: rgba(212, 168, 83, 0.4);
+      transform: scale(1.03);
+    }
+
+    .benefit-icon { font-size: 2rem; margin-bottom: 0.75rem; display: block; }
+
+    .benefit-item h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+      color: var(--text);
+    }
+
+    .benefit-item p {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* Steps */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2rem;
+      position: relative;
+    }
+
+    .steps::before {
+      content: '';
+      position: absolute;
+      top: 2.5rem;
+      left: 16.66%;
+      right: 16.66%;
+      height: 2px;
+      background: linear-gradient(90deg, var(--red), var(--gold), var(--red));
+      opacity: 0.3;
+    }
+
+    .step {
+      text-align: center;
+      position: relative;
+      opacity: 0;
+      transform: translateY(20px);
+    }
+
+    .step.visible {
+      opacity: 1;
+      transform: translateY(0);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+
+    .step-number {
+      width: 5rem;
+      height: 5rem;
+      margin: 0 auto 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      font-weight: 800;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(230,57,70,0.2), rgba(212,168,83,0.2));
+      border: 2px solid var(--border);
+      color: var(--gold-light);
+      position: relative;
+      z-index: 1;
+    }
+
+    .step h3 {
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .step p {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      max-width: 260px;
+      margin: 0 auto;
+    }
+
+    /* Form */
+    .form-section {
+      background: linear-gradient(180deg, transparent, rgba(230, 57, 70, 0.03) 50%, transparent);
+    }
+
+    .form-wrapper {
+      max-width: 600px;
+      margin: 0 auto;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2.5rem;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+      color: var(--text);
+    }
+
+    .form-group label .hint {
+      font-weight: 400;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+
+    .form-group input,
+    .form-group textarea {
+      width: 100%;
+      padding: 0.85rem 1rem;
+      background: rgba(5, 5, 8, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.95rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-group input:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(212, 168, 83, 0.15);
+    }
+
+    .form-group input.error,
+    .form-group textarea.error {
+      border-color: var(--red);
+      box-shadow: 0 0 0 3px rgba(230, 57, 70, 0.15);
+    }
+
+    .form-group textarea { resize: vertical; min-height: 120px; }
+
+    .error-msg {
+      font-size: 0.78rem;
+      color: var(--red);
+      margin-top: 0.35rem;
+      display: none;
+    }
+
+    .error-msg.show { display: block; }
+
+    .checkbox-group {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin-top: 3px;
+      accent-color: var(--red);
+      flex-shrink: 0;
+    }
+
+    .checkbox-group label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 0;
+      cursor: pointer;
+    }
+
+    .form-submit {
+      width: 100%;
+      margin-top: 0.5rem;
+      justify-content: center;
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: 0 4px 25px rgba(230, 57, 70, 0.25);
+    }
+
+    .form-submit-error {
+      display: none;
+      margin-bottom: 1rem;
+      padding: 0.85rem 1rem;
+      background: rgba(230, 57, 70, 0.1);
+      border: 1px solid rgba(230, 57, 70, 0.35);
+      border-radius: 8px;
+      color: var(--red);
+      font-size: 0.88rem;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    .form-submit-error.show { display: block; }
+
+    .form-success {
+      display: none;
+      text-align: center;
+      padding: 2rem;
+    }
+
+    .form-success.show { display: block; }
+    .form-success .success-icon { font-size: 3rem; margin-bottom: 1rem; }
+    .form-success h3 { color: var(--gold-light); margin-bottom: 0.5rem; }
+    .form-success p { color: var(--text-muted); }
+
+    #application-form.hidden { display: none; }
+
+    .char-counter {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: right;
+      margin-top: 0.25rem;
+    }
+
+    .char-counter.warn { color: var(--gold); }
+    .char-counter.over { color: var(--red); }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 0;
+      position: relative;
+      z-index: 1;
+    }
+
+    .footer-inner {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
+    }
+
+    .footer-brand {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .footer-brand strong {
+      color: var(--gold);
+      font-weight: 600;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .footer-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.88rem;
+      transition: color 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .footer-links a:hover { color: var(--gold-light); }
+
+    .constitution-link {
+      color: inherit;
+      text-decoration: underline;
+      text-decoration-color: rgba(212, 168, 83, 0.4);
+      text-underline-offset: 2px;
+      transition: color 0.2s, text-decoration-color 0.2s;
+    }
+
+    .constitution-link:hover {
+      color: var(--gold-light);
+      text-decoration-color: var(--gold);
+    }
+
+    /* Constitution modal */
+    .constitution-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgba(5, 5, 8, 0.88);
+      backdrop-filter: blur(10px);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s, visibility 0.3s;
+    }
+
+    .constitution-modal.open {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .constitution-dialog {
+      width: 100%;
+      max-width: 820px;
+      max-height: min(90vh, 900px);
+      display: flex;
+      flex-direction: column;
+      background: linear-gradient(180deg, rgba(18, 14, 24, 0.98), rgba(10, 8, 14, 0.98));
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 60px rgba(230, 57, 70, 0.08);
+      transform: translateY(20px) scale(0.98);
+      transition: transform 0.3s ease;
+      overflow: hidden;
+    }
+
+    .constitution-modal.open .constitution-dialog {
+      transform: translateY(0) scale(1);
+    }
+
+    .constitution-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: rgba(230, 57, 70, 0.04);
+    }
+
+    .constitution-header h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--gold-light), var(--red-glow));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .constitution-close {
+      width: 2.5rem;
+      height: 2.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-size: 1.25rem;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s, background 0.2s;
+      flex-shrink: 0;
+    }
+
+    .constitution-close:hover {
+      color: var(--text);
+      border-color: rgba(230, 57, 70, 0.4);
+      background: rgba(230, 57, 70, 0.1);
+    }
+
+    .constitution-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.75rem 1.5rem;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(212, 168, 83, 0.35) transparent;
+    }
+
+    .constitution-body::-webkit-scrollbar { width: 6px; }
+    .constitution-body::-webkit-scrollbar-thumb {
+      background: rgba(212, 168, 83, 0.35);
+      border-radius: 3px;
+    }
+
+    .constitution-status {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-muted);
+    }
+
+    .constitution-status.error { color: var(--red); }
+
+    .constitution-status .btn {
+      margin-top: 1rem;
+      padding: 0.65rem 1.25rem;
+      font-size: 0.9rem;
+    }
+
+    .constitution-content h1,
+    .constitution-content h2,
+    .constitution-content h3 {
+      color: var(--gold-light);
+      line-height: 1.35;
+      margin: 1.75rem 0 0.75rem;
+    }
+
+    .constitution-content h1 {
+      font-size: 1.5rem;
+      text-align: center;
+      margin-top: 0;
+    }
+
+    .constitution-content h2 {
+      font-size: 1.15rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid rgba(212, 168, 83, 0.15);
+    }
+
+    .constitution-content h3 {
+      font-size: 1rem;
+      color: var(--gold);
+    }
+
+    .constitution-content p {
+      margin-bottom: 0.85rem;
+      color: var(--text);
+      font-size: 0.92rem;
+      line-height: 1.7;
+    }
+
+    .constitution-content em {
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .constitution-content strong {
+      color: var(--gold-light);
+      font-weight: 600;
+    }
+
+    .constitution-content ul {
+      margin: 0.5rem 0 1rem 1.25rem;
+      list-style: none;
+    }
+
+    .constitution-content li {
+      position: relative;
+      padding-left: 1rem;
+      margin-bottom: 0.4rem;
+      font-size: 0.92rem;
+      line-height: 1.65;
+      color: var(--text);
+    }
+
+    .constitution-content li::before {
+      content: '◆';
+      position: absolute;
+      left: 0;
+      color: var(--red);
+      font-size: 0.5rem;
+      top: 0.55rem;
+    }
+
+    .constitution-content hr {
+      border: none;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border), transparent);
+      margin: 1.5rem 0;
+    }
+
+    .constitution-content a {
+      color: var(--gold);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .constitution-content a:hover { color: var(--gold-light); }
+
+    .constitution-content code {
+      font-family: ui-monospace, monospace;
+      font-size: 0.85em;
+      background: rgba(230, 57, 70, 0.1);
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+      color: var(--gold-light);
+    }
+
+    .constitution-footer {
+      padding: 0.85rem 1.5rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-align: center;
+      flex-shrink: 0;
+      background: rgba(5, 5, 8, 0.5);
+    }
+
+    .constitution-footer a {
+      color: var(--gold);
+      text-decoration: none;
+    }
+
+    .constitution-footer a:hover { color: var(--gold-light); }
+
+    body.modal-open { overflow: hidden; }
+
+    /* Registration modal */
+    .register-intro {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+      margin-bottom: 1.5rem;
+      line-height: 1.65;
+    }
+
+    .register-step-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--red);
+      margin-bottom: 0.5rem;
+    }
+
+    .register-code-input {
+      text-align: center;
+      font-size: 1.5rem;
+      letter-spacing: 0.35em;
+      font-family: ui-monospace, monospace;
+    }
+
+    .register-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    .register-actions .btn { justify-content: center; width: 100%; }
+
+    .register-secondary {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 0.5rem;
+      transition: color 0.2s;
+    }
+
+    .register-secondary:hover { color: var(--gold-light); }
+
+    .register-error {
+      display: none;
+      margin-bottom: 1rem;
+      padding: 0.85rem 1rem;
+      background: rgba(230, 57, 70, 0.1);
+      border: 1px solid rgba(230, 57, 70, 0.35);
+      border-radius: 8px;
+      color: var(--red);
+      font-size: 0.88rem;
+      line-height: 1.5;
+    }
+
+    .register-error.show { display: block; }
+
+    .register-success-panel {
+      text-align: center;
+      padding: 1.5rem 0.5rem;
+    }
+
+    .register-success-panel .success-icon { font-size: 3rem; margin-bottom: 1rem; }
+    .register-success-panel h3 { color: var(--gold-light); margin-bottom: 0.5rem; }
+    .register-success-panel p { color: var(--text-muted); font-size: 0.92rem; line-height: 1.65; }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+      .benefits-list { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    @media (max-width: 768px) {
+      nav {
+        position: fixed;
+        top: 60px;
+        left: 0;
+        right: 0;
+        background: rgba(5, 5, 8, 0.95);
+        backdrop-filter: blur(12px);
+        flex-direction: column;
+        padding: 1.5rem;
+        gap: 1.25rem;
+        border-bottom: 1px solid var(--border);
+        transform: translateY(-120%);
+        opacity: 0;
+        transition: transform 0.3s, opacity 0.3s;
+        pointer-events: none;
+      }
+
+      nav.open {
+        transform: translateY(0);
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .menu-toggle { display: block; }
+
+      .cards-3 { grid-template-columns: 1fr; }
+      .benefits-list { grid-template-columns: repeat(2, 1fr); }
+      .steps { grid-template-columns: 1fr; gap: 2.5rem; }
+      .steps::before { display: none; }
+
+      .footer-inner { flex-direction: column; text-align: center; }
+      .footer-links { justify-content: center; }
+
+      .form-wrapper { padding: 1.75rem; }
+    }
+
+    @media (max-width: 480px) {
+      .benefits-list { grid-template-columns: 1fr; }
+      section { padding: 3.5rem 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="starfield" aria-hidden="true">
+    <div class="stars"></div>
+    <div class="stars2"></div>
+    <div class="stars3"></div>
+  </div>
+
+  <header id="header">
+    <div class="header-inner">
+      <a href="#" class="logo"><span>✦ Квазар</span></a>
+      <button class="menu-toggle" id="menuToggle" aria-label="Меню">☰</button>
+      <nav id="nav">
+        <a href="#about">О нас</a>
+        <a href="#constitution" class="constitution-link">Конституция</a>
+        <a href="#register" class="nav-register" id="registerLink">Регистрация</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero" id="hero">
+      <div class="container">
+        <div class="hero-content">
+          <div class="hero-badge">🌌 Основано 22 июня 2026 года</div>
+          <h1>
+            Стань гражданином
+            <span class="highlight">Квазара</span>
+          </h1>
+          <p class="hero-subtitle">Цифровое государство без границ. Вступи в сообщество, которое строит будущее</p>
+          <p class="motto">«Объединяя усилия, создаем будущее»</p>
+          <div class="citizen-counter">
+            <span class="count" id="citizenCount">12</span>
+            <span class="label">граждан<br>Квазара</span>
+          </div>
+          <a href="#apply" class="btn btn-primary">🚀 Подать заявку</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- About -->
+    <section id="about">
+      <div class="container">
+        <div class="section-header">
+          <span class="tag">О нас</span>
+          <h2>Что такое Квазар</h2>
+          <p>Виртуальное государство нового поколения — децентрализованное, справедливое и ориентированное на реальную пользу</p>
+        </div>
+        <div class="cards-3">
+          <div class="card" data-animate>
+            <span class="card-icon">🔗</span>
+            <h3>Децентрализация</h3>
+            <p>Никакой единой точки власти. Решения принимаются коллективно, а управление распределено между гражданами через прозрачные механизмы голосования.</p>
+          </div>
+          <div class="card" data-animate>
+            <span class="card-icon">⚖️</span>
+            <h3>Общая собственность</h3>
+            <p>Инфраструктура, знания и ресурсы принадлежат всему сообществу. Каждый гражданин — совладелец цифрового государства.</p>
+          </div>
+          <div class="card" data-animate>
+            <span class="card-icon">📊</span>
+            <h3>Рейтинг полезности</h3>
+            <p>Вклад каждого гражданина оценивается сообществом. Активные участники получают признание, влияние и возможность стать Аей.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Benefits -->
+    <section id="benefits">
+      <div class="container">
+        <div class="section-header">
+          <span class="tag">Преимущества</span>
+          <h2>Что получает гражданин</h2>
+          <p>Пять ключевых привилегий членства в Квазаре</p>
+        </div>
+        <div class="benefits-list">
+          <div class="benefit-item" data-animate>
+            <span class="benefit-icon">🪪</span>
+            <h4>QZ-ID паспорт</h4>
+            <p>Уникальный цифровой идентификатор гражданина Квазара</p>
+          </div>
+          <div class="benefit-item" data-animate>
+            <span class="benefit-icon">✍️</span>
+            <h4>Уникальное имя</h4>
+            <p>Латинское имя до 13 символов — твоя цифровая личность</p>
+          </div>
+          <div class="benefit-item" data-animate>
+            <span class="benefit-icon">🗳️</span>
+            <h4>Право голоса</h4>
+            <p>Участвуй в принятии решений, влияющих на будущее государства</p>
+          </div>
+          <div class="benefit-item" data-animate>
+            <span class="benefit-icon">🏗️</span>
+            <h4>Доступ к инфраструктуре</h4>
+            <p>Пользуйся общими ресурсами, инструментами и сервисами сообщества</p>
+          </div>
+          <div class="benefit-item" data-animate>
+            <span class="benefit-icon">👑</span>
+            <h4>Путь к Ае</h4>
+            <p>Возможность стать Аей — лидером и хранителем Квазара</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- How to join -->
+    <section id="join">
+      <div class="container">
+        <div class="section-header">
+          <span class="tag">Как вступить</span>
+          <h2>Три шага к гражданству</h2>
+          <p>Простой и прозрачный процесс вступления в Квазар</p>
+        </div>
+        <div class="steps">
+          <div class="step" data-animate>
+            <div class="step-number">01</div>
+            <h3>Заполни заявку</h3>
+            <p>Укажи желаемое латинское имя, email и опиши, чем можешь быть полезен сообществу</p>
+          </div>
+          <div class="step" data-animate>
+            <div class="step-number">02</div>
+            <h3>Испытательный срок</h3>
+            <p>Один месяц знакомства с сообществом, участия в обсуждениях и первых проектах</p>
+          </div>
+          <div class="step" data-animate>
+            <div class="step-number">03</div>
+            <h3>Голосование</h3>
+            <p>После испытательного срока сообщество голосует за присвоение полного гражданства</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Application Form -->
+    <section class="form-section" id="apply">
+      <div class="container">
+        <div class="section-header">
+          <span class="tag">Заявка</span>
+          <h2>Подать заявку на гражданство</h2>
+          <p>Заполни форму — мы свяжемся с тобой в ближайшее время</p>
+        </div>
+        <div class="form-wrapper">
+          <form id="application-form" novalidate>
+            <input type="hidden" name="_subject" value="Новая заявка на гражданство Квазара">
+            <input type="hidden" name="_captcha" value="false">
+            <input type="hidden" name="_template" value="table">
+            <input type="text" name="_honey" style="display:none" tabindex="-1" autocomplete="off" aria-hidden="true">
+
+            <div class="form-submit-error" id="formSubmitError" role="alert"></div>
+
+            <div class="form-group">
+              <label for="name">Желаемое имя <span class="hint">(латиница, макс. 13 символов)</span></label>
+              <input type="text" id="name" name="desired_name" maxlength="13" placeholder="QuazarCitizen" required autocomplete="off">
+              <div class="char-counter" id="charCounter">0 / 13</div>
+              <div class="error-msg" id="nameError">Введите имя латиницей (A–Z, a–z), не более 13 символов</div>
+            </div>
+
+            <div class="form-group">
+              <label for="email">Email</label>
+              <input type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email">
+              <div class="error-msg" id="emailError">Введите корректный email-адрес</div>
+            </div>
+
+            <div class="form-group">
+              <label for="contribution">Чем можешь быть полезен Квазару?</label>
+              <textarea id="contribution" name="contribution" placeholder="Опиши свои навыки, идеи или проекты..." required></textarea>
+              <div class="error-msg" id="contributionError">Это поле обязательно для заполнения</div>
+            </div>
+
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="consent" name="consent" value="yes" required>
+                <label for="consent">Я согласен(на) с условиями вступления и обработкой данных в соответствии с <a href="#constitution" class="constitution-link">Конституцией Квазара</a></label>
+              </div>
+              <div class="error-msg" id="consentError">Необходимо дать согласие</div>
+            </div>
+
+            <button type="submit" class="btn btn-primary form-submit" id="submitBtn">✦ Отправить заявку</button>
+          </form>
+
+          <div class="form-success" id="formSuccess">
+            <div class="success-icon">🎉</div>
+            <h3>Заявка отправлена!</h3>
+            <p>Мы рассмотрим её и свяжемся с вами по email. Добро пожаловать в будущее Квазара.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <strong>✦ Квазар</strong> — цифровое государство<br>
+          Основано 22 июня 2026 · «Объединяя усилия, создаем будущее»
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/quazarvs" target="_blank" rel="noopener">⚡ GitHub</a>
+          <a href="#constitution" class="constitution-link">📜 Конституция</a>
+          <a href="mailto:quazarvs@gmail.com">✉️ quazarvs@gmail.com</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <div class="constitution-modal" id="registerModal" role="dialog" aria-modal="true" aria-labelledby="registerTitle" hidden>
+    <div class="constitution-dialog">
+      <div class="constitution-header">
+        <h2 id="registerTitle">✦ Регистрация</h2>
+        <button type="button" class="constitution-close" id="registerClose" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="constitution-body">
+        <div id="registerStep1">
+          <div class="register-step-label">Шаг 1 из 2 · Укажите ваш email</div>
+          <p class="register-intro">Создайте аккаунт, чтобы получить доступ к сервисам Квазара. Укажите email, на который мы отправим код подтверждения с <strong>quazarvs@gmail.com</strong>.</p>
+          <form id="registerForm" novalidate>
+            <div class="form-group">
+              <label for="regEmail">Ваш email <span class="hint">(куда придёт код)</span></label>
+              <input type="email" id="regEmail" name="email" placeholder="you@example.com" required autocomplete="email">
+              <div class="error-msg" id="regEmailError">Введите корректный email-адрес</div>
+            </div>
+            <div class="form-group">
+              <label for="regPassword">Пароль <span class="hint">(минимум 8 символов)</span></label>
+              <input type="password" id="regPassword" name="password" placeholder="••••••••" required minlength="8" autocomplete="new-password">
+              <div class="error-msg" id="regPasswordError">Пароль должен содержать не менее 8 символов</div>
+            </div>
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="regConsent" name="consent" value="yes" required>
+                <label for="regConsent">Я согласен(на) с <a href="#constitution" class="constitution-link">Конституцией Квазара</a> и обработкой данных</label>
+              </div>
+              <div class="error-msg" id="regConsentError">Необходимо дать согласие</div>
+            </div>
+            <div class="register-error" id="registerError" role="alert"></div>
+            <button type="submit" class="btn btn-primary register-actions" id="registerSubmitBtn">Получить код подтверждения</button>
+          </form>
+        </div>
+
+        <div id="registerStep2" hidden>
+          <div class="register-step-label">Шаг 2 из 2 · Введите код из письма</div>
+          <p class="register-intro">Код отправлен на <strong id="registerEmailDisplay"></strong> с <strong id="registerFromDisplay">quazarvs@gmail.com</strong>. Введите 6-значный код из письма. Код действителен 10 минут.</p>
+          <form id="verifyForm" novalidate>
+            <div class="form-group">
+              <label for="verifyCode">Код подтверждения</label>
+              <input type="text" id="verifyCode" class="register-code-input" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required autocomplete="one-time-code">
+              <div class="error-msg" id="verifyCodeError">Введите 6-значный код</div>
+            </div>
+            <div class="register-error" id="verifyError" role="alert"></div>
+            <div class="register-actions">
+              <button type="submit" class="btn btn-primary" id="verifySubmitBtn">Подтвердить регистрацию</button>
+              <button type="button" class="register-secondary" id="resendCode">Отправить код повторно</button>
+              <button type="button" class="register-secondary" id="backToEmail">← Изменить email</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="registerSuccess" class="register-success-panel" hidden>
+          <div class="success-icon">🎉</div>
+          <h3>Регистрация подтверждена!</h3>
+          <p>Ваш email успешно подтверждён. Добро пожаловать в Квазар — теперь вы можете подать заявку на гражданство.</p>
+          <a href="#apply" class="btn btn-primary" id="registerGoApply" style="margin-top:1.5rem">Подать заявку</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="constitution-modal" id="constitutionModal" role="dialog" aria-modal="true" aria-labelledby="constitutionTitle" hidden>
+    <div class="constitution-dialog">
+      <div class="constitution-header">
+        <h2 id="constitutionTitle">📜 Конституция Квазара</h2>
+        <button type="button" class="constitution-close" id="constitutionClose" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="constitution-body" id="constitutionBody">
+        <div class="constitution-status" id="constitutionStatus" hidden></div>
+        <div class="constitution-content" id="constitutionContent" hidden></div>
+      </div>
+      <div class="constitution-footer">
+        Текст встроен · обновлено из GitHub · <a href="https://github.com/successful707440/constitution" target="_blank" rel="noopener noreferrer">репозиторий</a>
+      </div>
+    </div>
+  </div>
+
+  <script type="text/plain" id="constitutionSource">
+# КОНСТИТУЦИЯ КВАЗАРА  
+*(Алгонизм. Цифровое государство)*
+
+*Принята единогласно. Вступает в силу с момента публикации.*
+
+---
+
+## ПРЕАМБУЛА
+
+Мы, граждане Квазара, утверждаем настоящую Конституцию как основной закон нашего государства.
+
+Квазар — это **алгонизм**: живая система, состоящая из алгоритмов, законов, решений граждан и записей в реестре.
+
+Мы не забираем — мы создаём сами.  
+Нам чужого не нужно. Если нам что-то нужно — мы создаём это сами.
+
+Защита Квазара — это защита труда каждого гражданина.
+
+---
+
+## ГЛАВА 1. ОСНОВЫ
+
+**Статья 1. Статус**  
+Квазар является цифровым государством.  
+Территория — интернет и пространство деятельности граждан.  
+Полное наименование: **Цифровое государство Квазар**. Сокращённо: **Квазар**.
+
+**Статья 2. Цели**  
+Квазар создан для:  
+- признания вклада, а не капитала;  
+- равных прав граждан;  
+- коллективного управления через консенсус;  
+- защиты интересов и безопасности граждан.
+
+**Статья 3. Гражданство**  
+1. Гражданином может быть только реальный человек. Один человек — одно гражданство.  
+2. Гражданство Квазара — второе, не отменяет гражданство реального государства.  
+3. Каждый гражданин получает уникальное имя (до 13 символов латиницы) и номер QZ-1, QZ-2…  
+4. Гражданство даётся за доказанную полезность. Не продаётся, не наследуется, не передаётся.
+
+**Статья 4. Коренной житель**  
+1. Единственный коренной житель — **Successful (QZ-1)**.  
+2. Он — неприкасаемый как Создатель и разработчик.  
+3. Это не даёт ему политических или экономических привилегий, кроме статуса коренного жителя и права вето до 2036 года.
+
+---
+
+## ГЛАВА 2. ОРГАНЫ ВЛАСТИ
+
+**Статья 5. Айя**  
+1. Айя — глава Квазара. Он представляет государство в целом и координирует взаимодействие городов-узлов.  
+2. Айя не вмешивается во внутренние дела городов, но координирует их для сохранения единства.  
+3. Айя избирается гражданами сроком на 5 лет.  
+4. Выборы проводятся только при наступлении основания: истечение срока, отставка, референдум.  
+5. Кворум — **50%+1 голос**.  
+6. До первых выборов обязанности Айи исполняет **Successful** как и.о. Айи.
+
+**Статья 6. Совет граждан**  
+Коллегиальный орган с правом законодательной инициативы.  
+Избирается на 2 года. Состав: от 3 до 11 человек.
+
+**Статья 7. Суд Квазара**  
+Судебный орган. Разрешает споры, применяет меры ответственности.  
+Судьи избираются на 3 года. Кворум — **50%+1 голос**.
+
+**Статья 8. Совет Безопасности**  
+Орган обороны и кибербезопасности.  
+Назначается Айей по согласованию с Советом граждан.
+
+**Статья 8.1. Экономический совет**  
+Орган, управляющий биржей, эмиссией и экономической стабильностью.  
+Назначается Советом граждан. Отчитывается не реже 1 раза в квартал.
+
+---
+
+## ГЛАВА 3. ЭКОНОМИКА
+
+**Статья 9. Экономическая система**  
+1. Экономика — бесденежная, распределительная. Внешние деньги для внутренних расчётов запрещены.  
+2. Инфраструктура доступна бесплатно.  
+3. Искусственный дефицит запрещён. При нехватке ресурсы делятся поровну или по согласию.  
+4. Ресурсы предоставляются гражданами добровольно и оплачиваются по Государственному своду.
+
+**Статья 10. Внутренняя валюта — квази**  
+1. Квазар имеет внутреннюю валюту **квази** — меру вклада.  
+2. Валюта не имеет внешнего курса до решения граждан.  
+3. Эмиссия — только как награда за создание новых ценностей.  
+4. Размер награды определяется **Государственным сводом**.  
+5. Баланс всегда положителен.  
+6. Квази не даёт политического веса, доступа или привилегий.
+
+**Статья 11. Биржа и собственность**  
+1. Биржа — механизм обмена между гражданином и государством.  
+2. Гражданин может предложить государству услуги и ресурсы.  
+3. Гражданин может приобрести у государства доступ, услуги и ресурсы.  
+4. Статус не продаётся.  
+5. Цены — по Государственному своду.  
+6. Государство может выступать заказчиком и исполнителем.  
+7. Все ресурсы — общая собственность.  
+8. Доступ определяется вкладом и статусом.
+
+---
+
+## ГЛАВА 4. ДЕЦЕНТРАЛИЗАЦИЯ
+
+**Статья 12. Распределённая инфраструктура**  
+Квазар не может существовать в одном центре. Реестр, законы, решения — распределены по узлам. Нет единой точки отказа.
+
+**Статья 13. Узлы и консенсус**  
+1. Любой гражданин может запустить узел.  
+2. Изменения требуют подтверждения ≥51% узлов.  
+3. Айя не может менять реестр единолично.
+
+---
+
+## ГЛАВА 5. ПРАВА И ОБЯЗАННОСТИ
+
+**Статья 14. Права граждан**  
+Граждане имеют право на:  
+- паспорт Квазара;  
+- участие в выборах и референдумах;  
+- право быть избранным;  
+- запуск узла;  
+- признание вклада в реестре;  
+- защиту в Суде;  
+- **участие в бирже**;  
+- доступ к информации о деятельности государства.
+
+Все права равны. Дискриминация запрещена.
+
+**Статья 15. Обязанности**  
+Граждане обязаны:  
+1. Соблюдать Конституцию и Кодекс.  
+2. Быть активными. Пассивность >6 месяцев — основание для пересмотра гражданства.  
+3. Не наносить вред Квазару, гражданам, инфраструктуре, репутации.  
+4. Сообщать об угрозах.  
+5. Координировать действия, затрагивающие общие ресурсы.  
+6. Помнить: **анонимность не является укрытием от ответственности**.
+
+**Статья 16. Второе гражданство**  
+Квазар не выдаёт реальных документов, не даёт права пересечения границ и не ведёт дипломатии от имени граждан.
+
+---
+
+## ГЛАВА 6. ГОРОДА И МЭРЫ
+
+**Статья 17. Города Квазара**  
+1. Городом признаётся любой узел (сервер), участвующий в синхронизации сети.  
+2. Гражданин, запустивший узел, становится **мэром** этого города.  
+3. Мэр управляет внутренними делами города (локальный чат, биржа, голосования — опционально).  
+4. Мэр признаёт власть Айи и Конституцию.  
+5. Статус мэра не передаётся и не наследуется.
+
+---
+
+## ГЛАВА 7. ПРИОБРЕТЕНИЕ ГРАЖДАНСТВА
+
+**Статья 18. Условия**  
+Гражданство даётся за полезность: интеллектуальный, технический, творческий, организационный вклад.
+
+**Статья 19. Процедура**  
+1. Заявка с описанием вклада.  
+2. Комитет по гражданству (Айя + назначенные) оценивает.  
+3. При одобрении — статус «Кандидат» на 1 месяц.  
+4. После вклада — голосование граждан.  
+5. При **50%+1 голос** — гражданство, паспорт, запись в реестр.
+
+---
+
+## ГЛАВА 8. СИМВОЛЫ
+
+**Статья 20. Флаг**  
+Красное полотнище с белым или жёлтым квазаром (луч из центра).
+
+**Статья 21. Девиз**  
+*«Объединяя усилия, создаём будущее»*.
+
+**Статья 22. Гимн**  
+Принимается отдельным решением граждан.
+
+---
+
+## ГЛАВА 9. ОБОРОНА
+
+**Статья 23. Принципы обороны**  
+1. Квазар не нападает. Оборона — ответная.  
+2. Любое посягательство — покушение на государство.  
+3. Ответ — немедленный, соразмерный.  
+4. Используются все доступные ресурсы.  
+5. Защита Квазара — это защита труда граждан.
+
+**Статья 24. Мобилизация**  
+При угрозе Айя объявляет состояние обороны. Граждане обязаны предоставить ресурсы. Отказ — нарушение Кодекса.
+
+---
+
+## ГЛАВА 10. РЕСУРСЫ И РЕЗУЛЬТАТЫ
+
+**Статья 25. Определения**  
+Ресурсы — мощности, диски, трафик.  
+Результаты — сайты, код, законы, дизайн, инфраструктура.
+
+**Статья 26. Режим**  
+1. Ресурсы становятся общей инфраструктурой.  
+2. Результаты — общая собственность.  
+3. Запрещено: майнинг, DDoS, нелегальный контент, коммерция третьих лиц.
+
+---
+
+## ГЛАВА 11. ИЗМЕНЕНИЕ КОНСТИТУЦИИ
+
+**Статья 27. Внесение поправок**  
+1. Предложения об изменении Конституции вносятся Айей, Советом граждан или не менее чем **50%+1 голос** от общего числа граждан.  
+2. Поправка принимается при голосовании не менее **50%+1 голос** от общего числа граждан.  
+3. Право вето на изменение Конституции принадлежит коренному жителю **Successful** до 2036 года.
+
+**Статья 28. Вступление в силу**  
+Настоящая Конституция вступает в силу с момента её принятия и публикации на официальном домене Квазара `quazar.website`.
+
+---
+
+*Принято единогласно.*
+
+**Подпись:** ⚡ *Successful / QZ-1* ⚡  
+**Дата основания:** 22 июня 2026 года  
+**Дата публикации:** день основания Цифрового государства Квазар
+  </script>
+
+  <script>
+    (function () {
+      'use strict';
+
+      /* Mobile menu */
+      const menuToggle = document.getElementById('menuToggle');
+      const nav = document.getElementById('nav');
+
+      menuToggle.addEventListener('click', function () {
+        nav.classList.toggle('open');
+        menuToggle.textContent = nav.classList.contains('open') ? '✕' : '☰';
+      });
+
+      nav.querySelectorAll('a:not(.constitution-link):not(.nav-register)').forEach(function (link) {
+        link.addEventListener('click', function () {
+          nav.classList.remove('open');
+          menuToggle.textContent = '☰';
+        });
+      });
+
+      /* Header scroll effect */
+      const header = document.getElementById('header');
+      window.addEventListener('scroll', function () {
+        header.classList.toggle('scrolled', window.scrollY > 50);
+      });
+
+      /* Scroll animations */
+      const animated = document.querySelectorAll('[data-animate]');
+      const observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry, i) {
+          if (entry.isIntersecting) {
+            setTimeout(function () {
+              entry.target.classList.add('visible');
+            }, i * 100);
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.15 });
+
+      animated.forEach(function (el) { observer.observe(el); });
+
+      /* Form validation & AJAX submit */
+      const form = document.getElementById('application-form');
+      const submitBtn = document.getElementById('submitBtn');
+      const formSubmitError = document.getElementById('formSubmitError');
+      const formSuccess = document.getElementById('formSuccess');
+      const honeyInput = form.querySelector('[name="_honey"]');
+      const nameInput = document.getElementById('name');
+      const emailInput = document.getElementById('email');
+      const contributionInput = document.getElementById('contribution');
+      const consentInput = document.getElementById('consent');
+      const charCounter = document.getElementById('charCounter');
+      const latinRegex = /^[A-Za-z]+$/;
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const FORM_SUBMIT_URL = 'https://formsubmit.co/ajax/quazarvs@gmail.com';
+      const SUBMIT_TIMEOUT_MS = 15000;
+      const submitBtnDefaultHtml = submitBtn.innerHTML;
+
+      nameInput.addEventListener('input', function () {
+        var len = nameInput.value.length;
+        charCounter.textContent = len + ' / 13';
+        charCounter.className = 'char-counter' + (len > 13 ? ' over' : len > 10 ? ' warn' : '');
+        nameInput.value = nameInput.value.replace(/[^A-Za-z]/g, '');
+      });
+
+      function showError(input, errorEl, show) {
+        if (show) {
+          input.classList.add('error');
+          errorEl.classList.add('show');
+        } else {
+          input.classList.remove('error');
+          errorEl.classList.remove('show');
+        }
+        return !show;
+      }
+
+      function validate() {
+        var valid = true;
+
+        var nameVal = nameInput.value.trim();
+        if (!nameVal || !latinRegex.test(nameVal) || nameVal.length > 13) {
+          valid = showError(nameInput, document.getElementById('nameError'), true) && valid;
+        } else {
+          showError(nameInput, document.getElementById('nameError'), false);
+        }
+
+        var emailVal = emailInput.value.trim();
+        if (!emailVal || !emailRegex.test(emailVal)) {
+          valid = showError(emailInput, document.getElementById('emailError'), true) && valid;
+        } else {
+          showError(emailInput, document.getElementById('emailError'), false);
+        }
+
+        var contribVal = contributionInput.value.trim();
+        if (!contribVal) {
+          valid = showError(contributionInput, document.getElementById('contributionError'), true) && valid;
+        } else {
+          showError(contributionInput, document.getElementById('contributionError'), false);
+        }
+
+        if (!consentInput.checked) {
+          document.getElementById('consentError').classList.add('show');
+          valid = false;
+        } else {
+          document.getElementById('consentError').classList.remove('show');
+        }
+
+        return valid;
+      }
+
+      function hideSubmitError() {
+        formSubmitError.textContent = '';
+        formSubmitError.classList.remove('show');
+      }
+
+      function showSubmitError(message) {
+        formSubmitError.textContent = message;
+        formSubmitError.classList.add('show');
+      }
+
+      function setSubmitting(isSubmitting) {
+        submitBtn.disabled = isSubmitting;
+        submitBtn.innerHTML = isSubmitting ? '⏳ Отправка...' : submitBtnDefaultHtml;
+      }
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        hideSubmitError();
+
+        if (!validate()) return;
+
+        if (honeyInput && honeyInput.value.trim()) return;
+
+        setSubmitting(true);
+
+        var controller = new AbortController();
+        var timeoutId = setTimeout(function () {
+          controller.abort();
+        }, SUBMIT_TIMEOUT_MS);
+
+        var payload = {
+          _subject: 'Новая заявка на гражданство Квазара',
+          _captcha: 'false',
+          _template: 'table',
+          desired_name: nameInput.value.trim(),
+          email: emailInput.value.trim(),
+          contribution: contributionInput.value.trim(),
+          consent: consentInput.checked ? 'yes' : ''
+        };
+
+        fetch(FORM_SUBMIT_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        })
+          .then(function (response) {
+            clearTimeout(timeoutId);
+            return response.json().then(function (data) {
+              if (!response.ok || data.success === false) {
+                throw new Error(data.message || 'Ошибка сервера');
+              }
+              return data;
+            });
+          })
+          .then(function () {
+            form.classList.add('hidden');
+            formSuccess.classList.add('show');
+          })
+          .catch(function (err) {
+            clearTimeout(timeoutId);
+            var message = err.name === 'AbortError'
+              ? 'Превышено время ожидания (15 с). Проверьте соединение и попробуйте снова.'
+              : 'Не удалось отправить заявку. Попробуйте позже или напишите на quazarvs@gmail.com';
+            showSubmitError(message);
+            setSubmitting(false);
+          });
+      });
+
+      /* Constitution viewer (embedded, no network fetch) */
+      var modal = document.getElementById('constitutionModal');
+      var closeBtn = document.getElementById('constitutionClose');
+      var statusEl = document.getElementById('constitutionStatus');
+      var contentEl = document.getElementById('constitutionContent');
+      var constitutionSource = document.getElementById('constitutionSource');
+
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function inlineMarkdown(text) {
+        var safe = escapeHtml(text);
+        safe = safe.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        safe = safe.replace(/\*(.+?)\*/g, '<em>$1</em>');
+        safe = safe.replace(/`(.+?)`/g, '<code>$1</code>');
+        safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (_, label, url) {
+          var href = url.trim();
+          if (!/^https?:\/\//i.test(href)) return label;
+          return '<a href="' + href + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+        });
+        return safe;
+      }
+
+      function parseMarkdown(md) {
+        var lines = md.replace(/\r\n/g, '\n').split('\n');
+        var html = [];
+        var inList = false;
+
+        function closeList() {
+          if (inList) {
+            html.push('</ul>');
+            inList = false;
+          }
+        }
+
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+          var trimmed = line.trim();
+
+          if (!trimmed) {
+            closeList();
+            continue;
+          }
+
+          if (/^---+$/.test(trimmed)) {
+            closeList();
+            html.push('<hr>');
+            continue;
+          }
+
+          if (/^###\s+/.test(trimmed)) {
+            closeList();
+            html.push('<h3>' + inlineMarkdown(trimmed.replace(/^###\s+/, '')) + '</h3>');
+            continue;
+          }
+
+          if (/^##\s+/.test(trimmed)) {
+            closeList();
+            html.push('<h2>' + inlineMarkdown(trimmed.replace(/^##\s+/, '')) + '</h2>');
+            continue;
+          }
+
+          if (/^#\s+/.test(trimmed)) {
+            closeList();
+            html.push('<h1>' + inlineMarkdown(trimmed.replace(/^#\s+/, '')) + '</h1>');
+            continue;
+          }
+
+          if (/^[-*]\s+/.test(trimmed)) {
+            if (!inList) {
+              html.push('<ul>');
+              inList = true;
+            }
+            html.push('<li>' + inlineMarkdown(trimmed.replace(/^[-*]\s+/, '')) + '</li>');
+            continue;
+          }
+
+          if (/^\d+\.\s+/.test(trimmed)) {
+            if (!inList) {
+              html.push('<ul>');
+              inList = true;
+            }
+            html.push('<li>' + inlineMarkdown(trimmed.replace(/^\d+\.\s+/, '')) + '</li>');
+            continue;
+          }
+
+          closeList();
+          html.push('<p>' + inlineMarkdown(trimmed) + '</p>');
+        }
+
+        closeList();
+        return html.join('\n');
+      }
+
+      function showStatus(message, isError) {
+        statusEl.textContent = message;
+        statusEl.className = 'constitution-status' + (isError ? ' error' : '');
+        statusEl.hidden = false;
+        contentEl.hidden = true;
+      }
+
+      function showContent(html) {
+        contentEl.innerHTML = html;
+        statusEl.hidden = true;
+        contentEl.hidden = false;
+        document.getElementById('constitutionBody').scrollTop = 0;
+      }
+
+      var constitutionCache = constitutionSource
+        ? parseMarkdown(constitutionSource.textContent.trim())
+        : null;
+
+      function loadConstitution() {
+        if (constitutionCache) {
+          showContent(constitutionCache);
+        } else {
+          showStatus('Текст Конституции не найден.', true);
+        }
+      }
+
+      function openConstitution(e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        nav.classList.remove('open');
+        menuToggle.textContent = '☰';
+        if (window.location.hash !== '#constitution') {
+          history.pushState(null, '', '#constitution');
+        }
+        modal.hidden = false;
+        modal.classList.add('open');
+        document.body.classList.add('modal-open');
+        closeBtn.focus();
+        loadConstitution();
+      }
+
+      function closeConstitution() {
+        modal.classList.remove('open');
+        document.body.classList.remove('modal-open');
+        if (window.location.hash === '#constitution') {
+          history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+        setTimeout(function () {
+          if (!modal.classList.contains('open')) modal.hidden = true;
+        }, 300);
+      }
+
+      document.querySelectorAll('.constitution-link').forEach(function (link) {
+        link.addEventListener('click', openConstitution);
+      });
+
+      closeBtn.addEventListener('click', closeConstitution);
+
+      modal.addEventListener('click', function (e) {
+        if (e.target === modal) closeConstitution();
+      });
+
+      /* Registration modal */
+      var registerModal = document.getElementById('registerModal');
+      var registerLink = document.getElementById('registerLink');
+      var registerClose = document.getElementById('registerClose');
+      var registerForm = document.getElementById('registerForm');
+      var verifyForm = document.getElementById('verifyForm');
+      var registerStep1 = document.getElementById('registerStep1');
+      var registerStep2 = document.getElementById('registerStep2');
+      var registerSuccess = document.getElementById('registerSuccess');
+      var regEmailInput = document.getElementById('regEmail');
+      var regPasswordInput = document.getElementById('regPassword');
+      var regConsentInput = document.getElementById('regConsent');
+      var verifyCodeInput = document.getElementById('verifyCode');
+      var registerError = document.getElementById('registerError');
+      var verifyError = document.getElementById('verifyError');
+      var registerSubmitBtn = document.getElementById('registerSubmitBtn');
+      var verifySubmitBtn = document.getElementById('verifySubmitBtn');
+      var registerEmailDisplay = document.getElementById('registerEmailDisplay');
+      var resendCodeBtn = document.getElementById('resendCode');
+      var backToEmailBtn = document.getElementById('backToEmail');
+      var registerGoApply = document.getElementById('registerGoApply');
+
+      var QUAZAR_EMAIL = 'quazarvs@gmail.com';
+      var QUAZAR_API_BASE = window.QUAZAR_API_BASE || (
+        location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+          ? 'http://localhost:8080'
+          : (location.hostname === 'quazar.website' || location.hostname === 'www.quazar.website')
+            ? location.origin
+            : 'https://api.quazar.website'
+      );
+      var ADMIN_FORM_URL = 'https://formsubmit.co/ajax/' + encodeURIComponent(QUAZAR_EMAIL);
+      var REG_STORAGE_KEY = 'quazar_reg_pending';
+      var REG_CONFIRMED_KEY = 'quazar_registrations';
+      var CODE_TTL_MS = 10 * 60 * 1000;
+      var registerSubmitDefault = registerSubmitBtn.innerHTML;
+      var verifySubmitDefault = verifySubmitBtn.innerHTML;
+
+      function getPendingRegistration() {
+        try {
+          var raw = sessionStorage.getItem(REG_STORAGE_KEY);
+          return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function savePendingRegistration(data) {
+        sessionStorage.setItem(REG_STORAGE_KEY, JSON.stringify(data));
+      }
+
+      function clearPendingRegistration() {
+        sessionStorage.removeItem(REG_STORAGE_KEY);
+      }
+
+      function isCodeExpired(pending) {
+        return !pending || Date.now() > pending.expires;
+      }
+
+      function hideRegisterError(el) {
+        el.textContent = '';
+        el.classList.remove('show');
+      }
+
+      function showRegisterError(el, message) {
+        el.textContent = message;
+        el.classList.add('show');
+      }
+
+      function setRegisterSubmitting(isSubmitting) {
+        registerSubmitBtn.disabled = isSubmitting;
+        registerSubmitBtn.innerHTML = isSubmitting ? '⏳ Отправка...' : registerSubmitDefault;
+      }
+
+      function setVerifySubmitting(isSubmitting) {
+        verifySubmitBtn.disabled = isSubmitting;
+        verifySubmitBtn.innerHTML = isSubmitting ? '⏳ Проверка...' : verifySubmitDefault;
+      }
+
+      function quazarApiPost(path, payload) {
+        var base = QUAZAR_API_BASE.replace(/\/$/, '');
+        var controller = new AbortController();
+        var timeoutId = setTimeout(function () { controller.abort(); }, SUBMIT_TIMEOUT_MS);
+
+        return fetch(base + path, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        }).then(function (response) {
+          clearTimeout(timeoutId);
+          return response.json().then(function (data) {
+            if (!response.ok || data.status === 'error') {
+              throw new Error(data.error || 'Ошибка сервера');
+            }
+            return data.data || data;
+          });
+        }).catch(function (err) {
+          clearTimeout(timeoutId);
+          throw err;
+        });
+      }
+
+      function formSubmitPost(url, payload) {
+        var controller = new AbortController();
+        var timeoutId = setTimeout(function () { controller.abort(); }, SUBMIT_TIMEOUT_MS);
+
+        return fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        }).then(function (response) {
+          clearTimeout(timeoutId);
+          return response.json().then(function (data) {
+            if (!response.ok || data.success === false) {
+              throw new Error(data.message || 'Ошибка сервера');
+            }
+            return data;
+          });
+        }).catch(function (err) {
+          clearTimeout(timeoutId);
+          throw err;
+        });
+      }
+
+      function sendConfirmationToAdmin(email, password) {
+        return formSubmitPost(ADMIN_FORM_URL, {
+          _subject: 'Регистрация подтверждена — Квазар',
+          _captcha: 'false',
+          _template: 'table',
+          email: email,
+          password: password || '(не указан)',
+          action: 'registration_confirmed',
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      function saveConfirmedRegistration(email) {
+        try {
+          var list = JSON.parse(localStorage.getItem(REG_CONFIRMED_KEY) || '[]');
+          if (!list.some(function (item) { return item.email === email; })) {
+            list.push({ email: email, confirmedAt: new Date().toISOString() });
+            localStorage.setItem(REG_CONFIRMED_KEY, JSON.stringify(list));
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      function showRegisterStep(step) {
+        registerStep1.hidden = step !== 1;
+        registerStep2.hidden = step !== 2;
+        registerSuccess.hidden = step !== 3;
+      }
+
+      function resetRegisterModal() {
+        registerForm.reset();
+        verifyForm.reset();
+        hideRegisterError(registerError);
+        hideRegisterError(verifyError);
+        document.getElementById('regEmailError').classList.remove('show');
+        document.getElementById('regPasswordError').classList.remove('show');
+        document.getElementById('regConsentError').classList.remove('show');
+        document.getElementById('verifyCodeError').classList.remove('show');
+        regEmailInput.classList.remove('error');
+        regPasswordInput.classList.remove('error');
+        verifyCodeInput.classList.remove('error');
+        setRegisterSubmitting(false);
+        setVerifySubmitting(false);
+        showRegisterStep(1);
+      }
+
+      function openRegister(e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        nav.classList.remove('open');
+        menuToggle.textContent = '☰';
+        if (modal.classList.contains('open')) closeConstitution();
+        if (window.location.hash !== '#register') {
+          history.pushState(null, '', '#register');
+        }
+        resetRegisterModal();
+        registerModal.hidden = false;
+        registerModal.classList.add('open');
+        document.body.classList.add('modal-open');
+        regEmailInput.focus();
+      }
+
+      function closeRegister() {
+        registerModal.classList.remove('open');
+        if (!modal.classList.contains('open')) {
+          document.body.classList.remove('modal-open');
+        }
+        if (window.location.hash === '#register') {
+          history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+        setTimeout(function () {
+          if (!registerModal.classList.contains('open')) registerModal.hidden = true;
+        }, 300);
+      }
+
+      function validateRegisterForm() {
+        var valid = true;
+        var emailVal = regEmailInput.value.trim();
+        var passwordVal = regPasswordInput.value;
+
+        if (!emailVal || !emailRegex.test(emailVal)) {
+          regEmailInput.classList.add('error');
+          document.getElementById('regEmailError').classList.add('show');
+          valid = false;
+        } else {
+          regEmailInput.classList.remove('error');
+          document.getElementById('regEmailError').classList.remove('show');
+        }
+
+        if (!passwordVal || passwordVal.length < 8) {
+          regPasswordInput.classList.add('error');
+          document.getElementById('regPasswordError').classList.add('show');
+          valid = false;
+        } else {
+          regPasswordInput.classList.remove('error');
+          document.getElementById('regPasswordError').classList.remove('show');
+        }
+
+        if (!regConsentInput.checked) {
+          document.getElementById('regConsentError').classList.add('show');
+          valid = false;
+        } else {
+          document.getElementById('regConsentError').classList.remove('show');
+        }
+
+        return valid;
+      }
+
+      function requestVerificationCode(email, password) {
+        var pending = {
+          email: email,
+          password: password,
+          expires: Date.now() + CODE_TTL_MS
+        };
+        savePendingRegistration(pending);
+
+        return quazarApiPost('/auth/register/send-code', { email: email }).then(function () {
+          registerEmailDisplay.textContent = email;
+          showRegisterStep(2);
+          verifyCodeInput.focus();
+        });
+      }
+
+      registerLink.addEventListener('click', openRegister);
+      registerClose.addEventListener('click', closeRegister);
+
+      registerModal.addEventListener('click', function (e) {
+        if (e.target === registerModal) closeRegister();
+      });
+
+      registerGoApply.addEventListener('click', function () {
+        closeRegister();
+        nav.classList.remove('open');
+        menuToggle.textContent = '☰';
+      });
+
+      verifyCodeInput.addEventListener('input', function () {
+        verifyCodeInput.value = verifyCodeInput.value.replace(/\D/g, '').slice(0, 6);
+      });
+
+      registerForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        hideRegisterError(registerError);
+
+        if (!validateRegisterForm()) return;
+
+        var email = regEmailInput.value.trim();
+        var password = regPasswordInput.value;
+        setRegisterSubmitting(true);
+
+        requestVerificationCode(email, password)
+          .catch(function (err) {
+            clearPendingRegistration();
+            var message = err.name === 'AbortError'
+              ? 'Превышено время ожидания. Проверьте соединение и попробуйте снова.'
+              : 'Не удалось отправить код. Попробуйте позже или напишите на quazarvs@gmail.com';
+            showRegisterError(registerError, message);
+          })
+          .finally(function () {
+            setRegisterSubmitting(false);
+          });
+      });
+
+      verifyForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        hideRegisterError(verifyError);
+
+        var code = verifyCodeInput.value.trim();
+        if (!/^\d{6}$/.test(code)) {
+          verifyCodeInput.classList.add('error');
+          document.getElementById('verifyCodeError').classList.add('show');
+          return;
+        }
+        verifyCodeInput.classList.remove('error');
+        document.getElementById('verifyCodeError').classList.remove('show');
+
+        var pending = getPendingRegistration();
+        if (!pending) {
+          showRegisterError(verifyError, 'Сессия истекла. Запросите код заново.');
+          showRegisterStep(1);
+          return;
+        }
+
+        if (isCodeExpired(pending)) {
+          clearPendingRegistration();
+          showRegisterError(verifyError, 'Сессия истекла. Запросите код заново.');
+          showRegisterStep(1);
+          return;
+        }
+
+        setVerifySubmitting(true);
+
+        quazarApiPost('/auth/register/verify-code', { email: pending.email, code: code })
+          .then(function () {
+            return sendConfirmationToAdmin(pending.email, pending.password).catch(function () {});
+          })
+          .then(function () {
+            saveConfirmedRegistration(pending.email);
+            clearPendingRegistration();
+            showRegisterStep(3);
+          })
+          .catch(function (err) {
+            var message = err.message || 'Ошибка проверки кода';
+            if (message.indexOf('истёк') !== -1 || message.indexOf('не найден') !== -1) {
+              clearPendingRegistration();
+              showRegisterStep(1);
+            }
+            showRegisterError(verifyError, message);
+          })
+          .finally(function () {
+            setVerifySubmitting(false);
+          });
+      });
+
+      resendCodeBtn.addEventListener('click', function () {
+        var pending = getPendingRegistration();
+        if (!pending) {
+          showRegisterStep(1);
+          return;
+        }
+        hideRegisterError(verifyError);
+        resendCodeBtn.disabled = true;
+        resendCodeBtn.textContent = '⏳ Отправка...';
+
+        quazarApiPost('/auth/register/send-code', { email: pending.email })
+          .then(function () {
+            pending.expires = Date.now() + CODE_TTL_MS;
+            savePendingRegistration(pending);
+            verifyCodeInput.value = '';
+            verifyCodeInput.focus();
+          })
+          .catch(function () {
+            showRegisterError(verifyError, 'Не удалось отправить код повторно. Попробуйте позже.');
+          })
+          .finally(function () {
+            resendCodeBtn.disabled = false;
+            resendCodeBtn.textContent = 'Отправить код повторно';
+          });
+      });
+
+      backToEmailBtn.addEventListener('click', function () {
+        clearPendingRegistration();
+        hideRegisterError(verifyError);
+        showRegisterStep(1);
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          if (registerModal.classList.contains('open')) closeRegister();
+          else if (modal.classList.contains('open')) closeConstitution();
+        }
+      });
+
+      if (window.location.hash === '#register') {
+        openRegister();
+      } else if (window.location.hash === '#constitution') {
+        openConstitution();
+      }
+
+      window.addEventListener('hashchange', function () {
+        if (window.location.hash === '#register') openRegister();
+        else if (registerModal.classList.contains('open')) closeRegister();
+        else if (window.location.hash === '#constitution') openConstitution();
+        else if (modal.classList.contains('open')) closeConstitution();
+      });
+
+      window.addEventListener('popstate', function () {
+        if (window.location.hash === '#register') openRegister();
+        else if (registerModal.classList.contains('open')) closeRegister();
+        else if (window.location.hash === '#constitution') openConstitution();
+        else if (modal.classList.contains('open')) {
+          modal.classList.remove('open');
+          document.body.classList.remove('modal-open');
+          modal.hidden = true;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

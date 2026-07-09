@@ -49,6 +49,9 @@ services:
       QUAZAR_BLOCK_MAX_WAIT_SECS: "30"
       QUAZAR_SYNC_INTERVAL_SECS: "60"
       QUAZAR_BOOTSTRAP_PEERS: QZ-NODE-2@http://quazar-node-2:8080
+      GMAIL_USER: ${GMAIL_USER}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      GMAIL_FROM_NAME: ${GMAIL_FROM_NAME:-Квазар}
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,6 +80,9 @@ services:
       QUAZAR_BLOCK_MAX_WAIT_SECS: "30"
       QUAZAR_SYNC_INTERVAL_SECS: "60"
       QUAZAR_BOOTSTRAP_PEERS: QZ-NODE-1@http://quazar-node:8080
+      GMAIL_USER: ${GMAIL_USER}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      GMAIL_FROM_NAME: ${GMAIL_FROM_NAME:-Квазар}
     depends_on:
       postgres-2:
         condition: service_healthy

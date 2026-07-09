@@ -85,6 +85,9 @@ fn default_dev_cors_origins() -> Vec<HeaderValue> {
         "http://127.0.0.1:8081",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://quazar.website",
+        "https://www.quazar.website",
+        "null",
     ]
     .iter()
     .filter_map(|origin| origin.parse().ok())
