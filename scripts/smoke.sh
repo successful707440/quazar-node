@@ -50,7 +50,7 @@ ensure_registered_citizen() {
   local pubkey="$2"
   local list
   list=$(curl -sf "$BASE_URL/citizen/list" -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
-  if echo "$list" | grep -q "\"name\":\"${name}\""; then
+  if echo "$list" | grep -qE "\"name\"[[:space:]]*:[[:space:]]*\"${name}\""; then
     return 0
   fi
   curl -sf -X POST "$BASE_URL/citizen/register" \
