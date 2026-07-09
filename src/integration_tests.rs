@@ -636,9 +636,15 @@ async fn governance_role_assignment_requires_candidacy() {
     };
     db::run_migrations(&pool).await.expect("migrations");
 
-    let n = uuid::Uuid::new_v4().simple().to_string();
-    let citizen_id = format!("role-guard-{n}");
-    let citizen_name = format!("roleg{n}");
+    let suffix: String = uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .take(12)
+        .collect();
+    let citizen_id = format!("roleguardian{suffix}");
+    let citizen_name = format!("roleg{suffix}");
 
     let event = build_citizen_added_event(
         &format!("citizen_add_{citizen_id}"),
@@ -672,9 +678,9 @@ async fn governance_role_assignment_requires_candidacy() {
     );
 
     let guardian_reg = build_citizen_added_event(
-        &format!("citizen_add_guard_reg_{n}"),
-        &format!("guard-reg-{n}"),
-        &format!("greg{n}"),
+        &format!("citizen_add_guard_reg_{suffix}"),
+        &format!("guardreg{suffix}"),
+        &format!("greg{suffix}"),
         "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f8077986",
         "RoleCity",
         "Guardian",
