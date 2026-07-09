@@ -37,6 +37,13 @@ if [ -z "$ALICE_ID" ] || [ "$ALICE_ID" = "null" ]; then
   exit 1
 fi
 
+ALICE_STATUS=$(curl -s "$BASE_URL/citizen/$ALICE_ID" -H "Authorization: Bearer $API_KEY" | jq -r '.data.status')
+if [ "$ALICE_STATUS" != "pending" ]; then
+  echo "Ошибка: ожидался status=pending после регистрации, получен: $ALICE_STATUS" >&2
+  exit 1
+fi
+echo "alice в статусе pending"
+
 echo -e "\n"
 
 echo "2. Регистрация гражданина bob"
@@ -70,14 +77,15 @@ echo -e "\n"
 echo "5b. Ожидание подтверждения паспорта (до 35 сек)"
 for _ in $(seq 1 35); do
   ISSUED=$(curl -s "$BASE_URL/citizen/$ALICE_ID" -H "Authorization: Bearer $API_KEY" | jq -r '.data.passport_issued')
-  if [ "$ISSUED" = "true" ]; then
-    echo "паспорт подтверждён"
+  STATUS=$(curl -s "$BASE_URL/citizen/$ALICE_ID" -H "Authorization: Bearer $API_KEY" | jq -r '.data.status')
+  if [ "$ISSUED" = "true" ] && [ "$STATUS" = "active" ]; then
+    echo "паспорт подтверждён, статус active"
     break
   fi
   sleep 1
 done
-if [ "$ISSUED" != "true" ]; then
-  echo "Ошибка: паспорт не подтверждён после выдачи" >&2
+if [ "$ISSUED" != "true" ] || [ "$STATUS" != "active" ]; then
+  echo "Ошибка: паспорт не подтверждён или статус не active" >&2
   exit 1
 fi
 

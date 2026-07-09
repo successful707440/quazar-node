@@ -26,6 +26,7 @@ use crate::AppState;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum CitizenStatus {
+    Pending,
     Active,
     Suspended,
     Revoked,
@@ -34,6 +35,7 @@ pub enum CitizenStatus {
 impl CitizenStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
+            CitizenStatus::Pending => "pending",
             CitizenStatus::Active => "active",
             CitizenStatus::Suspended => "suspended",
             CitizenStatus::Revoked => "revoked",
@@ -42,6 +44,7 @@ impl CitizenStatus {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
+            "pending" => Some(CitizenStatus::Pending),
             "active" => Some(CitizenStatus::Active),
             "suspended" => Some(CitizenStatus::Suspended),
             "revoked" => Some(CitizenStatus::Revoked),

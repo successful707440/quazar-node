@@ -60,6 +60,29 @@ ensure_registered_citizen() {
   wait_for_citizen "$name" >/dev/null
 }
 
+issue_passport_and_wait() {
+  local citizen_id="$1"
+  curl -sf -X POST "$BASE_URL/citizen/${citizen_id}/passport" \
+    -H "Authorization: Bearer $QUAZAR_MASTER_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"expires_in_days": 365}' >/dev/null
+  for _ in $(seq 1 35); do
+    local status
+    status=$(curl -sf "$BASE_URL/citizen/${citizen_id}" \
+      -H "Authorization: Bearer $QUAZAR_MASTER_KEY" | python3 -c "
+import sys, json
+d = json.load(sys.stdin).get('data', {})
+print(d.get('status', ''))
+")
+    if [ "$status" = "active" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Citizen ${citizen_id} did not become active within 35s" >&2
+  return 1
+}
+
 PG_HOST="${PG_HOST:-localhost}"
 PG_PORT="${PG_PORT:-5432}"
 if [[ "$DATABASE_URL" =~ @([^:/]+):([0-9]+)/ ]]; then
@@ -175,6 +198,8 @@ echo "$REGISTER" | grep -q '"status":"success"'
 
 SMOKE_ID=$(wait_for_citizen "$SMOKE_NAME")
 echo "Registered smoke citizen: ${SMOKE_ID}"
+issue_passport_and_wait "$SMOKE_ID"
+echo "Smoke citizen passport issued (active)"
 
 EVENTS=$(curl -sf "$BASE_URL/events" \
   -H "Authorization: Bearer $QUAZAR_NODE_SECRET")
@@ -204,6 +229,12 @@ echo "$SVOD_CAT" | grep -q 'IT'
 # Candidacy: nominate → vote (For) → appoint (if Approved)
 ensure_registered_citizen "testcitizen" "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f8077986"
 ensure_registered_citizen "buyercitizen" "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+
+TESTCITIZEN_ID=$(wait_for_citizen "test_citizen")
+BUYER_ID=$(wait_for_citizen "buyer_citizen")
+issue_passport_and_wait "$TESTCITIZEN_ID"
+issue_passport_and_wait "$BUYER_ID"
+echo "Test citizens activated with passports"
 
 CANDIDATE_ID=$(wait_for_citizen "$SMOKE_NAME")
 echo "Candidacy candidate: ${CANDIDATE_ID}"

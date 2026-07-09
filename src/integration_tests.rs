@@ -65,7 +65,6 @@ async fn pending_exists(pool: &PgPool, event_id: &str) -> bool {
     pending::exists(pool, event_id).await.unwrap_or(false)
 }
 
-/// Mirrors block_producer: events INSERT + projection + pending DELETE (projection only after block confirmation).
 async fn confirm_event_in_block_tx(
     tx: &mut Transaction<'_, Postgres>,
     event: &Event,
@@ -94,6 +93,25 @@ async fn confirm_event_in_block_tx(
 
     apply_event_projections_in_tx(tx, std::slice::from_ref(event)).await?;
     pending::delete_in_tx(tx, std::slice::from_ref(&event.event_id)).await
+}
+
+async fn activate_citizen_with_passport(pool: &PgPool, citizen_id: &str, citizen_name: &str) {
+    let passport_id = format!("passport-{citizen_id}");
+    let issue_event = build_passport_issued_event(
+        &format!("passport_issue_{passport_id}"),
+        &passport_id,
+        citizen_id,
+        citizen_name,
+        1_700_000_050,
+        1_800_000_050,
+        "system",
+        1_700_000_050,
+    );
+    let mut tx = pool.begin().await.expect("begin passport tx");
+    confirm_event_in_block_tx(&mut tx, &issue_event)
+        .await
+        .expect("passport projection");
+    tx.commit().await.expect("commit passport tx");
 }
 
 #[tokio::test]
@@ -130,6 +148,13 @@ async fn citizen_added_projection_writes_citizen() {
         .expect("query citizens");
 
     assert_eq!(name.as_deref(), Some("alice"));
+
+    let status: String = sqlx::query_scalar("SELECT status FROM citizens WHERE id = $1")
+        .bind("citizen-uuid-alice")
+        .fetch_one(&pool)
+        .await
+        .expect("citizen status");
+    assert_eq!(status, "pending");
 }
 
 #[tokio::test]
@@ -178,6 +203,12 @@ async fn pending_registration_not_visible_in_citizens() {
         citizen_exists(&pool, &citizen_id).await,
         "citizen must appear in SQL after block confirmation + projection"
     );
+    let status: String = sqlx::query_scalar("SELECT status FROM citizens WHERE id = $1")
+        .bind(&citizen_id)
+        .fetch_one(&pool)
+        .await
+        .expect("status after registration");
+    assert_eq!(status, "pending");
     assert!(
         !pending_exists(&pool, &event_id).await,
         "pending row must be removed after block"
@@ -282,6 +313,13 @@ async fn passport_issue_and_revoke_projection() {
     .await
     .expect("passport_issued flag");
     assert!(issued);
+
+    let status: String = sqlx::query_scalar("SELECT status FROM citizens WHERE id = $1")
+        .bind(citizen_id)
+        .fetch_one(&pool)
+        .await
+        .expect("status after passport");
+    assert_eq!(status, "active");
 
     let mut tx = pool.begin().await.expect("begin tx");
     apply_event_projections_in_tx(&mut tx, std::slice::from_ref(&revoke_event))
@@ -486,6 +524,7 @@ async fn candidacy_nomination_vote_approve_flow() {
         let mut tx = pool.begin().await.expect("tx");
         confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
         tx.commit().await.expect("commit");
+        activate_citizen_with_passport(&pool, id, &name).await;
     }
 
     let state = Arc::new(AppState {
@@ -540,6 +579,7 @@ async fn candidacy_nomination_vote_approve_flow() {
         let mut tx = pool.begin().await.expect("tx");
         confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm extra voter");
         tx.commit().await.expect("commit");
+        activate_citizen_with_passport(&pool, &extra_id, &extra_name).await;
 
         let extra_auth = AuthContext::from_api_key(extra_name, Role::Citizen);
         voted = vote_for_candidate(
@@ -618,6 +658,7 @@ async fn chat_send_and_list_messages() {
     let mut tx = pool.begin().await.expect("tx");
     confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
     tx.commit().await.expect("commit");
+    activate_citizen_with_passport(&pool, &citizen_id, &citizen_name).await;
 
     let state = Arc::new(AppState {
         db: pool.clone(),
@@ -773,6 +814,7 @@ async fn initiative_propose_and_vote_flow() {
         let mut tx = pool.begin().await.expect("tx");
         confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
         tx.commit().await.expect("commit");
+        activate_citizen_with_passport(&pool, id, &name).await;
     }
 
     let state = Arc::new(AppState {
@@ -847,6 +889,7 @@ async fn referendum_announce_and_vote_flow() {
     let mut tx = pool.begin().await.expect("tx");
     confirm_event_in_block_tx(&mut tx, &voter_event).await.expect("confirm");
     tx.commit().await.expect("commit");
+    activate_citizen_with_passport(&pool, &voter_id, &voter_name).await;
 
     let state = Arc::new(AppState {
         db: pool.clone(),
@@ -884,3 +927,4 @@ async fn referendum_announce_and_vote_flow() {
 
     assert_eq!(voted.votes_against, 1);
 }
+
