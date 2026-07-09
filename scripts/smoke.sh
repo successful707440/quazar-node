@@ -198,8 +198,6 @@ echo "$REGISTER" | grep -q '"status":"success"'
 
 SMOKE_ID=$(wait_for_citizen "$SMOKE_NAME")
 echo "Registered smoke citizen: ${SMOKE_ID}"
-issue_passport_and_wait "$SMOKE_ID"
-echo "Smoke citizen passport issued (active)"
 
 EVENTS=$(curl -sf "$BASE_URL/events" \
   -H "Authorization: Bearer $QUAZAR_NODE_SECRET")
@@ -210,6 +208,9 @@ BLOCKS=$(curl -sf "$BASE_URL/blocks" \
   -H "Authorization: Bearer $QUAZAR_NODE_SECRET")
 echo "$BLOCKS" | grep -q '"status":"success"'
 echo "$BLOCKS" | grep -q "$SMOKE_NAME"
+
+issue_passport_and_wait "$SMOKE_ID"
+echo "Smoke citizen passport issued (active)"
 
 KEYS=$(curl -sf "$BASE_URL/keys" \
   -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
