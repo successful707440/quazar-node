@@ -79,7 +79,7 @@ async fn apply_citizen_added(
     sqlx::query(
         r#"
         INSERT INTO citizens (id, name, public_key, status, role, created_at, passport_issued)
-        VALUES ($1, $2, $3, 'active', $4, $5, FALSE)
+        VALUES ($1, $2, $3, 'pending', $4, $5, FALSE)
         ON CONFLICT (id) DO UPDATE SET
             name = EXCLUDED.name,
             public_key = EXCLUDED.public_key,
@@ -134,7 +134,7 @@ async fn apply_passport_issued(
     .map_err(|e| format!("PassportIssued projection failed for {}: {}", passport_id, e))?;
 
     sqlx::query(
-        "UPDATE citizens SET passport_issued = TRUE, passport_expires = $1 WHERE id = $2",
+        "UPDATE citizens SET passport_issued = TRUE, passport_expires = $1, status = 'active' WHERE id = $2",
     )
     .bind(expires_at)
     .bind(citizen_id)

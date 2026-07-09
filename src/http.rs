@@ -243,7 +243,14 @@ pub async fn auth_middleware(
         .map(|k| (k.citizen_name, k.role));
 
     if let Some((citizen_name, key_role)) = key_data {
-        let role = resolve_role_for_citizen(&state.db, &citizen_name, key_role).await;
+        let (role, citizen_status) =
+            resolve_role_and_status_for_citizen(&state.db, &citizen_name, key_role).await;
+        if citizen_status == "pending" {
+            tracing::warn!(path = %path, citizen = %citizen_name, "pending citizen API access denied");
+            return response::forbidden(
+                "Доступ запрещён: паспорт ещё не выдан (статус pending). Дождитесь подтверждения в блокчейне.",
+            );
+        }
         tracing::debug!(path = %path, citizen = %citizen_name, ?role, "API key accepted");
         let auth = AuthContext::from_api_key(citizen_name, role);
         if let Some(response) = enforce_path_rbac(&path, &auth) {
@@ -257,20 +264,24 @@ pub async fn auth_middleware(
     response::unauthorized("Invalid or missing API key")
 }
 
-async fn resolve_role_for_citizen(
+async fn resolve_role_and_status_for_citizen(
     pool: &sqlx::PgPool,
     citizen_name: &str,
     key_role: Role,
-) -> Role {
-    let db_role: Option<String> = sqlx::query_scalar(
-        "SELECT role FROM citizens WHERE name = $1",
+) -> (Role, String) {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT role, status FROM citizens WHERE name = $1",
     )
     .bind(citizen_name)
     .fetch_optional(pool)
     .await
     .unwrap_or(None);
 
-    db_role
-        .and_then(|r| Role::from_str(&r))
-        .unwrap_or(key_role)
+    match row {
+        Some((role_str, status)) => {
+            let role = Role::from_str(&role_str).unwrap_or(key_role);
+            (role, status)
+        }
+        None => (key_role, "active".to_string()),
+    }
 }
