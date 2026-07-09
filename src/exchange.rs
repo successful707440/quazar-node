@@ -210,6 +210,25 @@ async fn lock_balance_in_tx(
         .map_err(|e| ExchangeError::DatabaseError(e.to_string()))
 }
 
+async fn ensure_active_citizen(pool: &PgPool, citizen_id: &str) -> Result<(), ExchangeError> {
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM citizens WHERE id = $1")
+        .bind(citizen_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?;
+
+    match status.as_deref() {
+        Some("active") => Ok(()),
+        Some("pending") => Err(ExchangeError::BadRequest(
+            "Биржа недоступна: паспорт ещё не выдан (статус pending)".to_string(),
+        )),
+        Some(other) => Err(ExchangeError::BadRequest(format!(
+            "Биржа недоступна: статус {other}"
+        ))),
+        None => Err(ExchangeError::NotFound("Citizen not found".to_string())),
+    }
+}
+
 pub async fn create_offer(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -221,6 +240,7 @@ pub async fn create_offer(
         ));
     }
     let seller = auth.resolve_account_id(&state.db).await;
+    ensure_active_citizen(&state.db, &seller).await?;
 
     if request.svod_code.trim().is_empty() {
         return Err(ExchangeError::BadRequest("svod_code is required".to_string()));
@@ -355,6 +375,14 @@ pub async fn cancel_offer(
     Extension(auth): Extension<AuthContext>,
     Path(offer_id): Path<String>,
 ) -> ExchangeResult<Json<ApiResponse>> {
+    if auth.is_node {
+        return Err(ExchangeError::Unauthorized(
+            "Node credentials cannot cancel offers".to_string(),
+        ));
+    }
+    let account_id = auth.resolve_account_id(&state.db).await;
+    ensure_active_citizen(&state.db, &account_id).await?;
+
     let offer = sqlx::query_as::<_, Offer>(
         "SELECT id, seller, service, svod_code, price, quantity, status, created_at FROM offers WHERE id = $1",
     )
@@ -364,7 +392,6 @@ pub async fn cancel_offer(
     .map_err(|e| ExchangeError::DatabaseError(e.to_string()))?
     .ok_or_else(|| ExchangeError::NotFound(format!("Offer {} not found", offer_id)))?;
 
-    let account_id = auth.resolve_account_id(&state.db).await;
     if !auth.is_master && offer.seller != account_id && offer.seller != auth.citizen_name {
         return Err(ExchangeError::Unauthorized(
             "Only the seller can cancel this offer".to_string(),
@@ -400,6 +427,7 @@ pub async fn create_order(
         ));
     }
     let buyer = auth.resolve_account_id(&state.db).await;
+    ensure_active_citizen(&state.db, &buyer).await?;
 
     if request.quantity == 0 {
         return Err(ExchangeError::BadRequest("Quantity must be greater than 0".to_string()));

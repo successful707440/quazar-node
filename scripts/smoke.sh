@@ -15,6 +15,7 @@ export QUAZAR_NODE_ID="${QUAZAR_NODE_ID:-QZ-NODE-2}"
 export QUAZAR_BLOCK_MIN_EVENTS="${QUAZAR_BLOCK_MIN_EVENTS:-1}"
 export QUAZAR_BLOCK_MAX_WAIT_SECS="${QUAZAR_BLOCK_MAX_WAIT_SECS:-5}"
 export QUAZAR_FORCE_PRODUCER="${QUAZAR_FORCE_PRODUCER:-true}"
+export QUAZAR_RATE_LIMIT_RPS="${QUAZAR_RATE_LIMIT_RPS:-200}"
 if [ "${SMOKE_USE_RANDOM_PORT:-1}" = "1" ]; then
   export QUAZAR_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')"
 fi
@@ -49,7 +50,7 @@ ensure_registered_citizen() {
   local pubkey="$2"
   local list
   list=$(curl -sf "$BASE_URL/citizen/list" -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
-  if echo "$list" | grep -q "\"name\":\"${name}\""; then
+  if echo "$list" | grep -qE "\"name\"[[:space:]]*:[[:space:]]*\"${name}\""; then
     return 0
   fi
   curl -sf -X POST "$BASE_URL/citizen/register" \
@@ -58,6 +59,29 @@ ensure_registered_citizen() {
     -d "{\"name\":\"${name}\",\"public_key\":\"${pubkey}\",\"role\":\"Citizen\",\"birth_place\":\"SmokeCity\"}" \
     | grep -q '"status":"success"'
   wait_for_citizen "$name" >/dev/null
+}
+
+issue_passport_and_wait() {
+  local citizen_id="$1"
+  curl -sf -X POST "$BASE_URL/citizen/${citizen_id}/passport" \
+    -H "Authorization: Bearer $QUAZAR_MASTER_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"expires_in_days": 365}' >/dev/null
+  for _ in $(seq 1 35); do
+    local status
+    status=$(curl -sf "$BASE_URL/citizen/${citizen_id}" \
+      -H "Authorization: Bearer $QUAZAR_MASTER_KEY" | python3 -c "
+import sys, json
+d = json.load(sys.stdin).get('data', {})
+print(d.get('status', ''))
+")
+    if [ "$status" = "active" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Citizen ${citizen_id} did not become active within 35s" >&2
+  return 1
 }
 
 PG_HOST="${PG_HOST:-localhost}"
@@ -201,9 +225,14 @@ SVOD_CAT=$(curl -sf "$BASE_URL/svod/categories" \
 echo "$SVOD_CAT" | grep -q '"status":"success"'
 echo "$SVOD_CAT" | grep -q 'IT'
 
+issue_passport_and_wait "$SMOKE_ID"
+echo "Smoke citizen passport issued (active)"
+
 # Candidacy: nominate → vote (For) → appoint (if Approved)
-ensure_registered_citizen "testcitizen" "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f8077986"
-ensure_registered_citizen "buyercitizen" "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+# testcitizen/buyercitizen are seed citizens (migration 006/011), already active
+TESTCITIZEN_ID=$(wait_for_citizen "testcitizen")
+BUYER_ID=$(wait_for_citizen "buyercitizen")
+echo "Test citizens ready (seed active)"
 
 CANDIDATE_ID=$(wait_for_citizen "$SMOKE_NAME")
 echo "Candidacy candidate: ${CANDIDATE_ID}"
