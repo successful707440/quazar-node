@@ -17,4 +17,4 @@ UPDATE citizens SET status = 'pending' WHERE passport_issued = false AND name !=
 
 -- Seed test citizens stay active so QUAZAR_INIT_TEST_KEYS and smoke candidacy flow work.
 UPDATE citizens SET status = 'active', passport_issued = TRUE
-WHERE name IN ('test_citizen', 'buyer_citizen', 'seller_citizen');
+WHERE name IN ('testcitizen', 'buyercitizen', 'sellercitizen');
