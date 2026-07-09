@@ -636,7 +636,7 @@ async fn governance_role_assignment_requires_candidacy() {
     };
     db::run_migrations(&pool).await.expect("migrations");
 
-    let n = uuid::Uuid::new_v4().to_string();
+    let n = uuid::Uuid::new_v4().simple().to_string();
     let citizen_id = format!("role-guard-{n}");
     let citizen_name = format!("roleg{n}");
 
@@ -692,6 +692,7 @@ async fn governance_role_assignment_requires_candidacy() {
 }
 
 
+#[tokio::test]
 async fn chat_send_and_list_messages() {
     use std::sync::Arc;
 
