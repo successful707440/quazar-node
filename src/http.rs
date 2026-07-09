@@ -240,11 +240,11 @@ pub async fn auth_middleware(
 
     let key_data = KeyStore::validate_key(&state.db, &api_key)
         .await
-        .map(|k| (k.citizen_name, k.role));
+        .map(|k| (k.citizen_name, k.role, api_key.clone()));
 
-    if let Some((citizen_name, key_role)) = key_data {
+    if let Some((citizen_name, key_role, key_value)) = key_data {
         let (role, citizen_status) =
-            resolve_role_and_status_for_citizen(&state.db, &citizen_name, key_role).await;
+            resolve_role_and_status_for_citizen(&state.db, &citizen_name, key_role, &key_value).await;
         if citizen_status == "pending" {
             tracing::warn!(path = %path, citizen = %citizen_name, "pending citizen API access denied");
             return response::forbidden(
@@ -268,6 +268,7 @@ async fn resolve_role_and_status_for_citizen(
     pool: &sqlx::PgPool,
     citizen_name: &str,
     key_role: Role,
+    api_key: &str,
 ) -> (Role, String) {
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT role, status FROM citizens WHERE name = $1",
@@ -279,7 +280,17 @@ async fn resolve_role_and_status_for_citizen(
 
     match row {
         Some((role_str, status)) => {
-            let role = Role::from_str(&role_str).unwrap_or(key_role);
+            let role = Role::from_str(&role_str).unwrap_or_else(|| key_role.clone());
+            if role != key_role {
+                KeyStore::sync_citizen_key_roles(pool, citizen_name, role.clone()).await;
+                tracing::info!(
+                    citizen = %citizen_name,
+                    key = %mask_key(api_key),
+                    api_keys_role = %key_role.as_str(),
+                    citizens_role = %role.as_str(),
+                    "api_keys.role synced from citizens on auth"
+                );
+            }
             (role, status)
         }
         None => (key_role, "active".to_string()),

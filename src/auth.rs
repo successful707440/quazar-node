@@ -198,9 +198,54 @@ impl KeyStore {
         Ok(rows.into_iter().map(ApiKey::from).collect())
     }
 
+    pub async fn lookup_citizen_role(pool: &PgPool, citizen_name: &str) -> Option<Role> {
+        sqlx::query_scalar::<_, String>("SELECT role FROM citizens WHERE name = $1")
+            .bind(citizen_name)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|role_str| Role::from_str(&role_str))
+    }
+
+    pub async fn sync_roles_from_citizens(pool: &PgPool) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE api_keys SET role = citizens.role
+            FROM citizens
+            WHERE api_keys.citizen_name = citizens.name
+              AND api_keys.role IS DISTINCT FROM citizens.role
+            "#,
+        )
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn sync_citizen_key_roles(pool: &PgPool, citizen_name: &str, role: Role) {
+        if let Err(e) = sqlx::query(
+            "UPDATE api_keys SET role = $1 WHERE citizen_name = $2 AND is_active = TRUE AND role IS DISTINCT FROM $1",
+        )
+        .bind(role.as_str())
+        .bind(citizen_name)
+        .execute(pool)
+        .await
+        {
+            tracing::warn!(
+                citizen = %citizen_name,
+                error = %e,
+                "failed to sync api_keys.role from citizens"
+            );
+        }
+    }
+
     pub async fn sync_from_env(pool: &PgPool) -> Result<(), sqlx::Error> {
         sync_env_keys(pool).await?;
         sync_test_keys(pool).await?;
+        let synced = Self::sync_roles_from_citizens(pool).await.unwrap_or(0);
+        if synced > 0 {
+            tracing::info!(synced, "api_keys.role aligned with citizens after env sync");
+        }
         let count = Self::count_active(pool).await.unwrap_or(0);
         tracing::info!(count, "API keys synced to PostgreSQL");
         Ok(())
@@ -236,10 +281,13 @@ async fn sync_env_keys(pool: &PgPool) -> Result<(), sqlx::Error> {
             continue;
         }
         let (key, role_str, citizen_name) = (parts[0], parts[1], parts[2]);
-        let Some(role) = Role::from_str(role_str) else {
+        let Some(env_role) = Role::from_str(role_str) else {
             tracing::warn!(entry = %entry, role = %role_str, "skipped API key: unknown role");
             continue;
         };
+        let role = KeyStore::lookup_citizen_role(pool, citizen_name)
+            .await
+            .unwrap_or(env_role);
         KeyStore::upsert_key(pool, key, role, citizen_name).await?;
         tracing::info!(key = %mask_key(key), citizen = %citizen_name, role = %role_str, "synced API key from env");
     }
