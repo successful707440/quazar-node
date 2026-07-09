@@ -33,6 +33,8 @@ services:
 
   quazar-node:
     build: .
+    env_file:
+      - .env
     ports:
       - "8080:8080"
     environment:
@@ -52,6 +54,7 @@ services:
       GMAIL_USER: ${GMAIL_USER}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
       GMAIL_FROM_NAME: ${GMAIL_FROM_NAME:-Квазар}
+      QUAZAR_CORS_ORIGINS: "*"
     depends_on:
       postgres:
         condition: service_healthy

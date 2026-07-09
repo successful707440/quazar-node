@@ -58,21 +58,35 @@ fn purge_expired_codes(codes: &mut HashMap<String, PendingCode>) {
 }
 
 fn check_ip_rate_limit(ip: &str) -> Result<(), String> {
-    let mut counts = IP_SEND_COUNTS.lock().expect("ip send counts lock");
+    let counts = IP_SEND_COUNTS.lock().expect("ip send counts lock");
     let now = Instant::now();
     let hour = Duration::from_secs(3600);
 
+    let mut counts = counts;
     counts.retain(|_, (_, started_at)| now.duration_since(*started_at) < hour);
 
+    let entry = counts.get(ip).copied().unwrap_or((0, now));
+    let (count, started_at) = if now.duration_since(entry.1) >= hour {
+        (0, now)
+    } else {
+        entry
+    };
+    if count >= MAX_SENDS_PER_IP_PER_HOUR {
+        return Err("Слишком много запросов. Попробуйте позже.".to_string());
+    }
+    Ok(())
+}
+
+fn record_ip_send(ip: &str) {
+    let mut counts = IP_SEND_COUNTS.lock().expect("ip send counts lock");
+    let now = Instant::now();
+    let hour = Duration::from_secs(3600);
+    counts.retain(|_, (_, started_at)| now.duration_since(*started_at) < hour);
     let entry = counts.entry(ip.to_string()).or_insert((0, now));
     if now.duration_since(entry.1) >= hour {
         *entry = (0, now);
     }
-    if entry.0 >= MAX_SENDS_PER_IP_PER_HOUR {
-        return Err("Слишком много запросов. Попробуйте позже.".to_string());
-    }
     entry.0 += 1;
-    Ok(())
 }
 
 fn client_ip(connect_info: Option<&ConnectInfo<SocketAddr>>) -> String {
@@ -158,6 +172,8 @@ pub async fn send_code_handler(
             },
         );
     }
+
+    record_ip_send(&ip);
 
     tracing::info!(to = %email, client_ip = %ip, "verification code sent");
 

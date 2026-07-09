@@ -1,6 +1,10 @@
+use std::time::Duration;
+
 use lettre::message::header::ContentType;
+use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use lettre::{Message, SmtpTransport, Transport};
+use tokio::time::timeout;
 
 #[derive(Debug, Clone)]
 pub struct SmtpConfig {
@@ -26,7 +30,7 @@ impl SmtpConfig {
     }
 }
 
-pub async fn send_verification_code(
+fn send_verification_code_blocking(
     config: &SmtpConfig,
     to_email: &str,
     code: &str,
@@ -43,12 +47,16 @@ pub async fn send_verification_code(
         from_email = config.user,
     );
 
+    let from_mailbox: Mailbox = Mailbox::new(
+        Some(config.from_name.clone()),
+        config
+            .user
+            .parse()
+            .map_err(|e| format!("invalid from address: {e}"))?,
+    );
+
     let email = Message::builder()
-        .from(
-            format!("{} <{}>", config.from_name, config.user)
-                .parse()
-                .map_err(|e| format!("invalid from address: {e}"))?,
-        )
+        .from(from_mailbox)
         .to(to_email
             .parse()
             .map_err(|e| format!("invalid recipient address: {e}"))?)
@@ -59,15 +67,38 @@ pub async fn send_verification_code(
 
     let creds = Credentials::new(config.user.clone(), config.app_password.clone());
 
-    let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay("smtp.gmail.com")
+    let mailer = SmtpTransport::starttls_relay("smtp.gmail.com")
         .map_err(|e| format!("SMTP relay error: {e}"))?
+        .port(587)
         .credentials(creds)
+        .timeout(Some(Duration::from_secs(20)))
         .build();
 
     mailer
-        .send(email)
-        .await
+        .send(&email)
         .map_err(|e| format!("failed to send email: {e}"))?;
 
     Ok(())
+}
+
+pub async fn send_verification_code(
+    config: &SmtpConfig,
+    to_email: &str,
+    code: &str,
+) -> Result<(), String> {
+    let config = config.clone();
+    let to_email = to_email.to_string();
+    let code = code.to_string();
+
+    let result = timeout(
+        Duration::from_secs(25),
+        tokio::task::spawn_blocking(move || {
+            send_verification_code_blocking(&config, &to_email, &code)
+        }),
+    )
+    .await
+    .map_err(|_| "SMTP send timed out (check network or Gmail app password)".to_string())?
+    .map_err(|e| format!("SMTP task failed: {e}"))?;
+
+    result
 }

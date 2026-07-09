@@ -632,7 +632,33 @@
     .form-success h3 { color: var(--gold-light); margin-bottom: 0.5rem; }
     .form-success p { color: var(--text-muted); }
 
-    #application-form.hidden { display: none; }
+    #application-form.hidden,
+    #applyGate.hidden { display: none; }
+
+    .apply-gate {
+      text-align: center;
+      padding: 2rem 1rem;
+    }
+
+    .apply-gate-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      opacity: 0.9;
+    }
+
+    .apply-gate h3 {
+      color: var(--gold-light);
+      margin-bottom: 0.75rem;
+      font-size: 1.25rem;
+    }
+
+    .apply-gate p {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+      line-height: 1.65;
+      max-width: 420px;
+      margin: 0 auto 1.5rem;
+    }
 
     .char-counter {
       font-size: 0.75rem;
@@ -1070,7 +1096,7 @@
             <span class="count" id="citizenCount">12</span>
             <span class="label">граждан<br>Квазара</span>
           </div>
-          <a href="#apply" class="btn btn-primary">🚀 Подать заявку</a>
+          <a href="#apply" class="btn btn-primary cta-apply">🚀 Подать заявку</a>
         </div>
       </div>
     </section>
@@ -1152,8 +1178,8 @@
         <div class="steps">
           <div class="step" data-animate>
             <div class="step-number">01</div>
-            <h3>Заполни заявку</h3>
-            <p>Укажи желаемое латинское имя, email и опиши, чем можешь быть полезен сообществу</p>
+            <h3>Подтверди email</h3>
+            <p>Укажи email и введи код из письма — затем заполни заявку с желаемым именем и описанием вклада</p>
           </div>
           <div class="step" data-animate>
             <div class="step-number">02</div>
@@ -1178,7 +1204,14 @@
           <p>Заполни форму — мы свяжемся с тобой в ближайшее время</p>
         </div>
         <div class="form-wrapper">
-          <form id="application-form" novalidate>
+          <div id="applyGate" class="apply-gate">
+            <div class="apply-gate-icon">🔐</div>
+            <h3>Подтвердите email для подачи заявки</h3>
+            <p>Чтобы подать заявку на гражданство, сначала подтвердите свой email. Мы отправим 6-значный код на вашу почту.</p>
+            <button type="button" class="btn btn-primary cta-apply">✦ Подтвердить email</button>
+          </div>
+
+          <form id="application-form" class="hidden" novalidate>
             <input type="hidden" name="_subject" value="Новая заявка на гражданство Квазара">
             <input type="hidden" name="_captcha" value="false">
             <input type="hidden" name="_template" value="table">
@@ -1251,17 +1284,12 @@
       <div class="constitution-body">
         <div id="registerStep1">
           <div class="register-step-label">Шаг 1 из 2 · Укажите ваш email</div>
-          <p class="register-intro">Создайте аккаунт, чтобы получить доступ к сервисам Квазара. Укажите email, на который мы отправим код подтверждения с <strong>quazarvs@gmail.com</strong>.</p>
+          <p class="register-intro">Подтвердите email, чтобы подать заявку на гражданство. Код подтверждения придёт с <strong>quazarvs@gmail.com</strong>.</p>
           <form id="registerForm" novalidate>
             <div class="form-group">
               <label for="regEmail">Ваш email <span class="hint">(куда придёт код)</span></label>
               <input type="email" id="regEmail" name="email" placeholder="you@example.com" required autocomplete="email">
               <div class="error-msg" id="regEmailError">Введите корректный email-адрес</div>
-            </div>
-            <div class="form-group">
-              <label for="regPassword">Пароль <span class="hint">(минимум 8 символов)</span></label>
-              <input type="password" id="regPassword" name="password" placeholder="••••••••" required minlength="8" autocomplete="new-password">
-              <div class="error-msg" id="regPasswordError">Пароль должен содержать не менее 8 символов</div>
             </div>
             <div class="form-group">
               <div class="checkbox-group">
@@ -1295,9 +1323,9 @@
 
         <div id="registerSuccess" class="register-success-panel" hidden>
           <div class="success-icon">🎉</div>
-          <h3>Регистрация подтверждена!</h3>
-          <p>Ваш email успешно подтверждён. Добро пожаловать в Квазар — теперь вы можете подать заявку на гражданство.</p>
-          <a href="#apply" class="btn btn-primary" id="registerGoApply" style="margin-top:1.5rem">Подать заявку</a>
+          <h3>Email подтверждён!</h3>
+          <p>Ваш email успешно подтверждён. Теперь заполните заявку на гражданство Квазара.</p>
+          <button type="button" class="btn btn-primary cta-apply" id="registerGoApply" style="margin-top:1.5rem">Перейти к заявке</button>
         </div>
       </div>
     </div>
@@ -1603,7 +1631,7 @@
       const latinRegex = /^[A-Za-z]+$/;
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       const FORM_SUBMIT_URL = 'https://formsubmit.co/ajax/quazarvs@gmail.com';
-      const SUBMIT_TIMEOUT_MS = 15000;
+      const SUBMIT_TIMEOUT_MS = 35000;
       const submitBtnDefaultHtml = submitBtn.innerHTML;
 
       nameInput.addEventListener('input', function () {
@@ -1676,6 +1704,12 @@
       form.addEventListener('submit', function (e) {
         e.preventDefault();
         hideSubmitError();
+
+        if (!isEmailVerified()) {
+          showSubmitError('Подтвердите email, чтобы отправить заявку.');
+          openRegister();
+          return;
+        }
 
         if (!validate()) return;
 
@@ -1902,8 +1936,8 @@
       var registerStep1 = document.getElementById('registerStep1');
       var registerStep2 = document.getElementById('registerStep2');
       var registerSuccess = document.getElementById('registerSuccess');
+      var applyGate = document.getElementById('applyGate');
       var regEmailInput = document.getElementById('regEmail');
-      var regPasswordInput = document.getElementById('regPassword');
       var regConsentInput = document.getElementById('regConsent');
       var verifyCodeInput = document.getElementById('verifyCode');
       var registerError = document.getElementById('registerError');
@@ -1916,19 +1950,89 @@
       var registerGoApply = document.getElementById('registerGoApply');
 
       var QUAZAR_EMAIL = 'quazarvs@gmail.com';
+      var isPrivateLan = /^192\.168\.|^10\.|^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(location.hostname);
       var QUAZAR_API_BASE = window.QUAZAR_API_BASE || (
         location.hostname === 'localhost' || location.hostname === '127.0.0.1'
           ? 'http://localhost:8080'
-          : (location.hostname === 'quazar.website' || location.hostname === 'www.quazar.website')
-            ? location.origin
-            : 'https://api.quazar.website'
+          : isPrivateLan
+            ? 'http://' + location.hostname + ':8080'
+            : (location.hostname === 'quazar.website' || location.hostname === 'www.quazar.website')
+              ? location.origin
+              : 'https://api.quazar.website'
       );
       var ADMIN_FORM_URL = 'https://formsubmit.co/ajax/' + encodeURIComponent(QUAZAR_EMAIL);
       var REG_STORAGE_KEY = 'quazar_reg_pending';
-      var REG_CONFIRMED_KEY = 'quazar_registrations';
+      var VERIFIED_EMAIL_KEY = 'quazar_email_verified';
       var CODE_TTL_MS = 10 * 60 * 1000;
       var registerSubmitDefault = registerSubmitBtn.innerHTML;
       var verifySubmitDefault = verifySubmitBtn.innerHTML;
+
+      function getVerifiedEmail() {
+        try {
+          return sessionStorage.getItem(VERIFIED_EMAIL_KEY) || '';
+        } catch (e) {
+          return '';
+        }
+      }
+
+      function isEmailVerified() {
+        var email = getVerifiedEmail();
+        return !!email && emailRegex.test(email);
+      }
+
+      function saveVerifiedEmail(email) {
+        try {
+          sessionStorage.setItem(VERIFIED_EMAIL_KEY, email);
+        } catch (e) { /* ignore */ }
+      }
+
+      function updateApplyAccess() {
+        var verified = isEmailVerified();
+        var verifiedEmail = getVerifiedEmail();
+
+        if (verified) {
+          applyGate.classList.add('hidden');
+          form.classList.remove('hidden');
+          if (verifiedEmail && !emailInput.value.trim()) {
+            emailInput.value = verifiedEmail;
+          }
+          emailInput.readOnly = true;
+        } else {
+          applyGate.classList.remove('hidden');
+          form.classList.add('hidden');
+          emailInput.readOnly = false;
+        }
+      }
+
+      function goToApply() {
+        updateApplyAccess();
+        if (!isEmailVerified()) {
+          openRegister();
+          return;
+        }
+        nav.classList.remove('open');
+        menuToggle.textContent = '☰';
+        if (window.location.hash !== '#apply') {
+          history.pushState(null, '', '#apply');
+        }
+        document.getElementById('apply').scrollIntoView({ behavior: 'smooth' });
+      }
+
+      function handleApplyCta(e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        if (isEmailVerified()) {
+          goToApply();
+        } else {
+          openRegister(e);
+        }
+      }
+
+      document.querySelectorAll('.cta-apply').forEach(function (btn) {
+        btn.addEventListener('click', handleApplyCta);
+      });
 
       function getPendingRegistration() {
         try {
@@ -1986,14 +2090,23 @@
           signal: controller.signal
         }).then(function (response) {
           clearTimeout(timeoutId);
-          return response.json().then(function (data) {
+          return response.json().catch(function () {
+            return { status: 'error', error: 'Некорректный ответ сервера' };
+          }).then(function (data) {
             if (!response.ok || data.status === 'error') {
-              throw new Error(data.error || 'Ошибка сервера');
+              var errMsg = data.error || data.message || 'Ошибка сервера (' + response.status + ')';
+              throw new Error(errMsg);
             }
             return data.data || data;
           });
         }).catch(function (err) {
           clearTimeout(timeoutId);
+          if (err.name === 'AbortError') {
+            throw err;
+          }
+          if (err.message === 'Failed to fetch' || err.message.indexOf('NetworkError') !== -1) {
+            throw new Error('Не удалось связаться с сервером. Проверьте, что API запущен (' + base + ').');
+          }
           throw err;
         });
       }
@@ -2024,26 +2137,15 @@
         });
       }
 
-      function sendConfirmationToAdmin(email, password) {
+      function sendConfirmationToAdmin(email) {
         return formSubmitPost(ADMIN_FORM_URL, {
-          _subject: 'Регистрация подтверждена — Квазар',
+          _subject: 'Email подтверждён — Квазар',
           _captcha: 'false',
           _template: 'table',
           email: email,
-          password: password || '(не указан)',
-          action: 'registration_confirmed',
+          action: 'email_verified',
           timestamp: new Date().toISOString()
         });
-      }
-
-      function saveConfirmedRegistration(email) {
-        try {
-          var list = JSON.parse(localStorage.getItem(REG_CONFIRMED_KEY) || '[]');
-          if (!list.some(function (item) { return item.email === email; })) {
-            list.push({ email: email, confirmedAt: new Date().toISOString() });
-            localStorage.setItem(REG_CONFIRMED_KEY, JSON.stringify(list));
-          }
-        } catch (e) { /* ignore */ }
       }
 
       function showRegisterStep(step) {
@@ -2058,11 +2160,9 @@
         hideRegisterError(registerError);
         hideRegisterError(verifyError);
         document.getElementById('regEmailError').classList.remove('show');
-        document.getElementById('regPasswordError').classList.remove('show');
         document.getElementById('regConsentError').classList.remove('show');
         document.getElementById('verifyCodeError').classList.remove('show');
         regEmailInput.classList.remove('error');
-        regPasswordInput.classList.remove('error');
         verifyCodeInput.classList.remove('error');
         setRegisterSubmitting(false);
         setVerifySubmitting(false);
@@ -2103,7 +2203,6 @@
       function validateRegisterForm() {
         var valid = true;
         var emailVal = regEmailInput.value.trim();
-        var passwordVal = regPasswordInput.value;
 
         if (!emailVal || !emailRegex.test(emailVal)) {
           regEmailInput.classList.add('error');
@@ -2112,15 +2211,6 @@
         } else {
           regEmailInput.classList.remove('error');
           document.getElementById('regEmailError').classList.remove('show');
-        }
-
-        if (!passwordVal || passwordVal.length < 8) {
-          regPasswordInput.classList.add('error');
-          document.getElementById('regPasswordError').classList.add('show');
-          valid = false;
-        } else {
-          regPasswordInput.classList.remove('error');
-          document.getElementById('regPasswordError').classList.remove('show');
         }
 
         if (!regConsentInput.checked) {
@@ -2133,10 +2223,9 @@
         return valid;
       }
 
-      function requestVerificationCode(email, password) {
+      function requestVerificationCode(email) {
         var pending = {
           email: email,
-          password: password,
           expires: Date.now() + CODE_TTL_MS
         };
         savePendingRegistration(pending);
@@ -2155,10 +2244,9 @@
         if (e.target === registerModal) closeRegister();
       });
 
-      registerGoApply.addEventListener('click', function () {
+      registerGoApply.addEventListener('click', function (e) {
         closeRegister();
-        nav.classList.remove('open');
-        menuToggle.textContent = '☰';
+        goToApply();
       });
 
       verifyCodeInput.addEventListener('input', function () {
@@ -2172,15 +2260,14 @@
         if (!validateRegisterForm()) return;
 
         var email = regEmailInput.value.trim();
-        var password = regPasswordInput.value;
         setRegisterSubmitting(true);
 
-        requestVerificationCode(email, password)
+        requestVerificationCode(email)
           .catch(function (err) {
             clearPendingRegistration();
             var message = err.name === 'AbortError'
               ? 'Превышено время ожидания. Проверьте соединение и попробуйте снова.'
-              : 'Не удалось отправить код. Попробуйте позже или напишите на quazarvs@gmail.com';
+              : (err.message || 'Не удалось отправить код. Попробуйте позже или напишите на quazarvs@gmail.com');
             showRegisterError(registerError, message);
           })
           .finally(function () {
@@ -2219,11 +2306,12 @@
 
         quazarApiPost('/auth/register/verify-code', { email: pending.email, code: code })
           .then(function () {
-            return sendConfirmationToAdmin(pending.email, pending.password).catch(function () {});
+            return sendConfirmationToAdmin(pending.email).catch(function () {});
           })
           .then(function () {
-            saveConfirmedRegistration(pending.email);
+            saveVerifiedEmail(pending.email);
             clearPendingRegistration();
+            updateApplyAccess();
             showRegisterStep(3);
           })
           .catch(function (err) {
@@ -2278,14 +2366,30 @@
         }
       });
 
+      updateApplyAccess();
+
+      function handleApplyHash() {
+        if (window.location.hash === '#apply') {
+          if (isEmailVerified()) {
+            updateApplyAccess();
+          } else {
+            history.replaceState(null, '', window.location.pathname + window.location.search);
+            openRegister();
+          }
+        }
+      }
+
       if (window.location.hash === '#register') {
         openRegister();
       } else if (window.location.hash === '#constitution') {
         openConstitution();
+      } else if (window.location.hash === '#apply') {
+        handleApplyHash();
       }
 
       window.addEventListener('hashchange', function () {
         if (window.location.hash === '#register') openRegister();
+        else if (window.location.hash === '#apply') handleApplyHash();
         else if (registerModal.classList.contains('open')) closeRegister();
         else if (window.location.hash === '#constitution') openConstitution();
         else if (modal.classList.contains('open')) closeConstitution();
@@ -2293,6 +2397,7 @@
 
       window.addEventListener('popstate', function () {
         if (window.location.hash === '#register') openRegister();
+        else if (window.location.hash === '#apply') handleApplyHash();
         else if (registerModal.classList.contains('open')) closeRegister();
         else if (window.location.hash === '#constitution') openConstitution();
         else if (modal.classList.contains('open')) {
