@@ -257,9 +257,9 @@ async fn sync_test_keys(pool: &PgPool) -> Result<(), sqlx::Error> {
     }
 
     let test_keys = [
-        ("test_citizen_key_2026", Role::Citizen, "test_citizen"),
-        ("buyer_key_2026", Role::Citizen, "buyer_citizen"),
-        ("seller_key_2026", Role::Citizen, "seller_citizen"),
+        ("test_citizen_key_2026", Role::Citizen, "testcitizen"),
+        ("buyer_key_2026", Role::Citizen, "buyercitizen"),
+        ("seller_key_2026", Role::Citizen, "sellercitizen"),
     ];
 
     for (key, role, name) in &test_keys {

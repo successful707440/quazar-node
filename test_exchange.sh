@@ -14,11 +14,11 @@ fi
 BASE_URL="http://localhost:8080"
 API_KEY="${QUAZAR_MASTER_KEY:?QUAZAR_MASTER_KEY not set — add it to .env}"
 
-echo "1. Добавляем баланс для пользователя test_citizen (Aiya)"
+echo "1. Добавляем баланс для пользователя testcitizen (Aiya)"
 curl -s -X POST "$BASE_URL/exchange/balance/add" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"citizen_id": "test_citizen", "amount": 1000}' | jq '.'
+  -d '{"citizen_id": "testcitizen", "amount": 1000}' | jq '.'
 echo
 
 echo "1b. Просмотр Сводa (каталог услуг)"
@@ -26,7 +26,7 @@ curl -s -H "X-API-Key: $API_KEY" \
   "$BASE_URL/svod" | jq '.'
 echo
 
-echo "2. Создаем предложение от test_citizen (услуга из Свода WEB_DEV, мин. цена 100 QZ)"
+echo "2. Создаем предложение от testcitizen (услуга из Свода WEB_DEV, мин. цена 100 QZ)"
 curl -s -X POST "$BASE_URL/exchange/offer" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
@@ -38,7 +38,7 @@ curl -s -H "X-API-Key: $API_KEY" \
   "$BASE_URL/exchange/offers" | jq '.'
 echo
 
-echo "4. Проверяем баланс test_citizen"
+echo "4. Проверяем баланс testcitizen"
 curl -s -H "X-API-Key: $API_KEY" \
   "$BASE_URL/exchange/balance" | jq '.'
 echo

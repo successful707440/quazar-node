@@ -334,7 +334,7 @@ async fn apply_candidate_approved(
     let candidacy_id = require_str(&event.data, "candidacy_id")?;
 
     sqlx::query(
-        "UPDATE candidacies SET status = 'Approved', approved_at = to_timestamp($1) WHERE id = $2",
+        "UPDATE candidacies SET status = 'Approved', approved_at = to_timestamp($1) WHERE id = $2 AND status = 'Active'",
     )
     .bind(event.timestamp as f64)
     .bind(candidacy_id)

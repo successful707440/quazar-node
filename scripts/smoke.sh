@@ -189,7 +189,7 @@ echo "$BLOCKS" | grep -q "$SMOKE_NAME"
 KEYS=$(curl -sf "$BASE_URL/keys" \
   -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
 echo "$KEYS" | grep -q '"status":"success"'
-echo "$KEYS" | grep -q 'test_citizen'
+echo "$KEYS" | grep -q 'testcitizen'
 
 SVOD=$(curl -sf "$BASE_URL/svod" \
   -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
@@ -202,8 +202,8 @@ echo "$SVOD_CAT" | grep -q '"status":"success"'
 echo "$SVOD_CAT" | grep -q 'IT'
 
 # Candidacy: nominate → vote (For) → appoint (if Approved)
-ensure_registered_citizen "test_citizen" "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f8077986"
-ensure_registered_citizen "buyer_citizen" "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+ensure_registered_citizen "testcitizen" "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f8077986"
+ensure_registered_citizen "buyercitizen" "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
 
 CANDIDATE_ID=$(wait_for_citizen "$SMOKE_NAME")
 echo "Candidacy candidate: ${CANDIDATE_ID}"
