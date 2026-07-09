@@ -1195,6 +1195,7 @@ async fn api_keys_role_matches_citizens_after_sync() {
         eprintln!("skip api_keys_role_matches_citizens_after_sync: PostgreSQL unavailable");
         return;
     };
+    db::run_migrations(&pool).await.expect("migrations");
     ensure_test_auth_secrets();
 
     let citizen_name = format!(
