@@ -50,3 +50,5 @@ jobs:
 
       - name: smoke test
         run: bash scripts/smoke.sh
+        env:
+          QUAZAR_INIT_TEST_KEYS: "true"
