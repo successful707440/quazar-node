@@ -76,6 +76,14 @@ impl EventValidator {
                     .and_then(|v| v.as_str())
                     .ok_or(ValidationError::MissingRequiredField("public_key".to_string()))?;
                 crate::crypto::validate_public_key_hex(public_key)?;
+                if let Some(role) = data.get("role").and_then(|v| v.as_str()) {
+                    if crate::types::is_governance_role_str(role) {
+                        return Err(ValidationError::DataValidationFailed(
+                            "Governance roles cannot be set at registration; use candidacy flow"
+                                .to_string(),
+                        ));
+                    }
+                }
                 Ok(())
             }
             QuazarEventType::PassportIssued => {
@@ -348,6 +356,15 @@ impl EventValidator {
         let citizens = get_all_citizen_names(db).await.unwrap_or_default();
         Self::validate_event_data(&event_type, &event.data, &citizens)?;
 
+        if matches!(event_type, QuazarEventType::CitizenUpdated) {
+            if let Some(role) = event.data.get("role").and_then(|v| v.as_str()) {
+                if crate::types::is_governance_role_str(role) {
+                    let citizen_id = Self::require_str(&event.data, "citizen_id")?;
+                    validate_governance_role_via_candidacy(db, citizen_id, role).await?;
+                }
+            }
+        }
+
         let event_hash = crate::blockchain::compute_event_hash(event);
         if let Some(provided) = event.hash.as_ref().filter(|h| !h.is_empty()) {
             if provided != &event_hash {
@@ -379,6 +396,31 @@ async fn event_id_exists(db: &PgPool, event_id: &str) -> bool {
     .unwrap_or(false);
 
     in_pending || in_events
+}
+
+async fn validate_governance_role_via_candidacy(
+    db: &PgPool,
+    citizen_id: &str,
+    role: &str,
+) -> Result<(), ValidationError> {
+    let has_candidacy: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1 FROM candidacies
+            WHERE citizen_id = $1 AND target_role = $2 AND status IN ('Approved', 'Appointed')
+        )",
+    )
+    .bind(citizen_id)
+    .bind(role)
+    .fetch_one(db)
+    .await
+    .map_err(|e| ValidationError::DataValidationFailed(e.to_string()))?;
+
+    if !has_candidacy {
+        return Err(ValidationError::DataValidationFailed(
+            "Governance roles can only be assigned through candidacy appointment".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 async fn get_all_citizen_names(db: &PgPool) -> Result<Vec<String>, sqlx::Error> {

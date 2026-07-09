@@ -624,6 +624,81 @@ async fn candidacy_nomination_vote_approve_flow() {
 }
 
 #[tokio::test]
+async fn governance_role_assignment_requires_candidacy() {
+    use crate::blockchain::build_signed_citizen_role_event;
+    use crate::validator::EventValidator;
+
+    ensure_test_auth_secrets();
+
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip governance_role_assignment_requires_candidacy: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool).await.expect("migrations");
+
+    let suffix: String = uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .take(12)
+        .collect();
+    let citizen_id = format!("roleguardian{suffix}");
+    let citizen_name = format!("roleg{suffix}");
+
+    let event = build_citizen_added_event(
+        &format!("citizen_add_{citizen_id}"),
+        &citizen_id,
+        &citizen_name,
+        "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "RoleCity",
+        "Citizen",
+        "system",
+        1_700_003_000,
+    );
+    let mut tx = pool.begin().await.expect("tx");
+    confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
+    tx.commit().await.expect("commit");
+
+    let role_event = build_signed_citizen_role_event(
+        &format!("citizen_role_{citizen_id}_direct"),
+        &citizen_id,
+        &citizen_name,
+        "Guardian",
+        "system",
+        1_700_003_100,
+    );
+    let err = EventValidator::validate_event(&role_event, &pool)
+        .await
+        .expect_err("direct Guardian role without candidacy must fail");
+    let msg = err.message();
+    assert!(
+        msg.contains("candidacy") || msg.contains("Governance"),
+        "unexpected error: {msg}"
+    );
+
+    let guardian_reg = build_citizen_added_event(
+        &format!("citizen_add_guard_reg_{suffix}"),
+        &format!("guardreg{suffix}"),
+        &format!("greg{suffix}"),
+        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f8077986",
+        "RoleCity",
+        "Guardian",
+        "system",
+        1_700_003_200,
+    );
+    let reg_err = EventValidator::validate_event(&guardian_reg, &pool)
+        .await
+        .expect_err("registration with Guardian role must fail");
+    let reg_msg = reg_err.message();
+    assert!(
+        reg_msg.contains("registration") || reg_msg.contains("candidacy"),
+        "unexpected registration error: {reg_msg}"
+    );
+}
+
+
+#[tokio::test]
 async fn chat_send_and_list_messages() {
     use std::sync::Arc;
 

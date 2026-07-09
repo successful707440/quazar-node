@@ -193,6 +193,7 @@ pub enum CitizenError {
     PassportAlreadyIssued,
     PassportNotFound,
     InsufficientPermissions,
+    GovernanceRoleRequiresCandidacy,
     InvalidCitizenName(String),
     InvalidPublicKey,
     DatabaseError(String),
@@ -222,6 +223,10 @@ impl CitizenError {
             CitizenError::InsufficientPermissions => {
                 (StatusCode::FORBIDDEN, "Недостаточно прав".to_string())
             }
+            CitizenError::GovernanceRoleRequiresCandidacy => (
+                StatusCode::BAD_REQUEST,
+                "Роли Guardian, Judge и Aiya назначаются только через процесс кандидатуры (nominate → vote → appoint)".to_string(),
+            ),
             CitizenError::InvalidCitizenName(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             CitizenError::InvalidPublicKey => (
                 StatusCode::BAD_REQUEST,
@@ -383,6 +388,7 @@ pub async fn register_citizen(
         return CitizenError::CitizenAlreadyExists.to_response();
     }
 
+    // Default Citizen on registration is membership, not governance role assignment.
     let role = match req.role {
         Some(r) => match Role::from_str(&r) {
             Some(role) => role,
@@ -391,8 +397,8 @@ pub async fn register_citizen(
         None => Role::Citizen,
     };
 
-    if role != Role::Citizen && !auth.can_assign_elevated_role() {
-        return CitizenError::InsufficientPermissions.to_response();
+    if role.is_governance() {
+        return CitizenError::GovernanceRoleRequiresCandidacy.to_response();
     }
 
     let citizen_id = Uuid::new_v4().to_string();
@@ -574,6 +580,10 @@ pub async fn update_role(
             StatusCode::OK,
             Json(ApiResponse::success(CitizenResponse::from(citizen))),
         );
+    }
+
+    if new_role.is_governance() {
+        return CitizenError::GovernanceRoleRequiresCandidacy.to_response();
     }
 
     let now = chrono::Utc::now().timestamp();
