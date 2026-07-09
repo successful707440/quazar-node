@@ -199,6 +199,8 @@ echo "$REGISTER" | grep -q '"status":"success"'
 
 SMOKE_ID=$(wait_for_citizen "$SMOKE_NAME")
 echo "Registered smoke citizen: ${SMOKE_ID}"
+issue_passport_and_wait "$SMOKE_ID"
+echo "Smoke citizen passport issued (active)"
 
 EVENTS=$(curl -sf "$BASE_URL/events" \
   -H "Authorization: Bearer $QUAZAR_NODE_SECRET")
@@ -233,6 +235,12 @@ echo "Smoke citizen passport issued (active)"
 TESTCITIZEN_ID=$(wait_for_citizen "testcitizen")
 BUYER_ID=$(wait_for_citizen "buyercitizen")
 echo "Test citizens ready (seed active)"
+
+TESTCITIZEN_ID=$(wait_for_citizen "test_citizen")
+BUYER_ID=$(wait_for_citizen "buyer_citizen")
+issue_passport_and_wait "$TESTCITIZEN_ID"
+issue_passport_and_wait "$BUYER_ID"
+echo "Test citizens activated with passports"
 
 CANDIDATE_ID=$(wait_for_citizen "$SMOKE_NAME")
 echo "Candidacy candidate: ${CANDIDATE_ID}"
