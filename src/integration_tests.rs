@@ -624,7 +624,6 @@ async fn candidacy_nomination_vote_approve_flow() {
 }
 
 #[tokio::test]
-#[tokio::test]
 async fn governance_role_assignment_requires_candidacy() {
     use crate::blockchain::build_signed_citizen_role_event;
     use crate::validator::EventValidator;
