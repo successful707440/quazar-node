@@ -12,6 +12,7 @@ use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 mod auth;
+mod auth_login;
 mod block_producer;
 mod blockchain;
 mod candidacy;
@@ -40,6 +41,7 @@ mod votes;
 mod integration_tests;
 
 use auth::{init_master_key, init_node_secret, init_reg_secret, master_key, node_secret, reg_secret, KeyStore};
+use auth_login::{check_password_handler, login_handler, set_password_handler, sync_test_passwords};
 use crypto::assert_production_secrets;
 use citizen::*;
 use candidacy::{
@@ -98,6 +100,9 @@ async fn main() {
     KeyStore::sync_from_env(&pool)
         .await
         .expect("Failed to sync API keys");
+    sync_test_passwords(&pool)
+        .await
+        .expect("Failed to sync test citizen passwords");
     let pending_count = pending::count(&pool).await.unwrap_or(0);
     tracing::info!(pending_events = pending_count, "PostgreSQL connected");
 
@@ -164,6 +169,8 @@ async fn main() {
     });
 
     let public_routes = Router::new()
+        .route("/auth/login", post(login_handler))
+        .route("/auth/check", get(check_password_handler))
         .route("/candidacy/list", get(list_candidacies_handler))
         .route("/candidacy/:id", get(get_candidacy_handler))
         .route("/initiative/list", get(list_initiatives_handler))
@@ -202,6 +209,7 @@ async fn main() {
         .route("/svod/admin/service", post(svod::create_service_handler))
         .route("/svod/admin/service/:code", put(svod::update_service_handler))
         .route("/svod/admin/service/:code", delete(svod::disable_service_handler))
+        .route("/auth/set-password", post(set_password_handler))
         .route("/keys", post(keys::create_api_key))
         .route("/keys", get(keys::list_api_keys))
         .route("/keys/revoke", post(keys::revoke_api_key))
