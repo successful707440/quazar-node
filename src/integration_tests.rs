@@ -928,3 +928,262 @@ async fn referendum_announce_and_vote_flow() {
     assert_eq!(voted.votes_against, 1);
 }
 
+#[tokio::test]
+async fn password_login_flow() {
+    use std::sync::Arc;
+
+    use axum::extract::{Extension, Query, State};
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    use crate::auth::{AuthContext, KeyStore};
+    use crate::auth_login::{check_password_handler, login_handler, set_password_handler, SetPasswordRequest};
+    use crate::auth_login::LoginRequest;
+    use crate::response::ApiResponse;
+    use crate::types::Role;
+    use crate::AppState;
+    use crate::nodes::NodeRegistry;
+
+    ensure_test_auth_secrets();
+
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip password_login_flow: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool).await.expect("migrations");
+
+    let n = uuid::Uuid::new_v4().simple().to_string();
+    let citizen_id = format!("pwd-citizen-{n}");
+    let citizen_name = format!("pwduser{n}");
+    let api_key = format!("pwd_key_{n}");
+
+    let event = build_citizen_added_event(
+        &format!("citizen_add_{citizen_id}"),
+        &citizen_id,
+        &citizen_name,
+        "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "PwdCity",
+        "Citizen",
+        "system",
+        1_700_005_000,
+    );
+    let mut tx = pool.begin().await.expect("tx");
+    confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
+    tx.commit().await.expect("commit");
+    activate_citizen_with_passport(&pool, &citizen_id, &citizen_name).await;
+
+    KeyStore::upsert_key(&pool, &api_key, Role::Citizen, &citizen_name)
+        .await
+        .expect("upsert api key");
+
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        node_registry: Arc::new(NodeRegistry::new(pool.clone())),
+        node_id: "TEST-NODE".to_string(),
+    });
+
+    let check_before = check_password_handler(
+        State(state.clone()),
+        Query(crate::auth_login::CheckPasswordQuery {
+            name: citizen_name.clone(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(check_before.status(), StatusCode::OK);
+    let check_body: ApiResponse = serde_json::from_slice(
+        &axum::body::to_bytes(check_before.into_body(), usize::MAX)
+            .await
+            .expect("check body"),
+    )
+    .expect("check json");
+    assert_eq!(
+        check_body.data.as_ref().and_then(|d| d.get("has_password")).and_then(|v| v.as_bool()),
+        Some(false)
+    );
+
+    let auth = AuthContext::from_api_key(citizen_name.clone(), Role::Citizen);
+    let set_resp = set_password_handler(
+        Extension(auth),
+        State(state.clone()),
+        axum::Json(SetPasswordRequest {
+            password: "testpass123".to_string(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(set_resp.status(), StatusCode::OK);
+
+    let check_after = check_password_handler(
+        State(state.clone()),
+        Query(crate::auth_login::CheckPasswordQuery {
+            name: citizen_name.clone(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(check_after.status(), StatusCode::OK);
+    let check_after_body: ApiResponse = serde_json::from_slice(
+        &axum::body::to_bytes(check_after.into_body(), usize::MAX)
+            .await
+            .expect("check after body"),
+    )
+    .expect("check after json");
+    assert_eq!(
+        check_after_body
+            .data
+            .as_ref()
+            .and_then(|d| d.get("has_password"))
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+
+    let wrong_login = login_handler(
+        State(state.clone()),
+        axum::Json(LoginRequest {
+            name: citizen_name.clone(),
+            password: "wrong".to_string(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(wrong_login.status(), StatusCode::BAD_REQUEST);
+
+    let login_resp = login_handler(
+        State(state.clone()),
+        axum::Json(LoginRequest {
+            name: citizen_name.clone(),
+            password: "testpass123".to_string(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(login_resp.status(), StatusCode::OK);
+
+    let login_body: ApiResponse = serde_json::from_slice(
+        &axum::body::to_bytes(login_resp.into_body(), usize::MAX)
+            .await
+            .expect("login body"),
+    )
+    .expect("login json");
+    assert_eq!(login_body.status, "success");
+    let data = login_body.data.expect("login data");
+    assert_eq!(data.get("citizen_id").and_then(|v| v.as_str()), Some(citizen_id.as_str()));
+    assert_eq!(data.get("name").and_then(|v| v.as_str()), Some(citizen_name.as_str()));
+    assert_eq!(data.get("api_key").and_then(|v| v.as_str()), Some(api_key.as_str()));
+}
+
+#[tokio::test]
+async fn pending_citizen_login_blocked_until_passport() {
+    use std::sync::Arc;
+
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    use crate::auth_login::{hash_password, login_handler, LoginRequest};
+    use crate::response::ApiResponse;
+    use crate::AppState;
+    use crate::nodes::NodeRegistry;
+
+    ensure_test_auth_secrets();
+
+    let Some(pool) = postgres_pool().await else {
+        eprintln!("skip pending_citizen_login_blocked_until_passport: PostgreSQL unavailable");
+        return;
+    };
+    db::run_migrations(&pool).await.expect("migrations");
+
+    let n = uuid::Uuid::new_v4().simple().to_string();
+    let citizen_id = format!("pend-login-{n}");
+    let citizen_name = format!("pendlogin{n}");
+
+    let event = build_citizen_added_event(
+        &format!("citizen_add_{citizen_id}"),
+        &citizen_id,
+        &citizen_name,
+        "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "PendingCity",
+        "Citizen",
+        "system",
+        1_700_006_000,
+    );
+    let mut tx = pool.begin().await.expect("tx");
+    confirm_event_in_block_tx(&mut tx, &event).await.expect("confirm");
+    tx.commit().await.expect("commit");
+
+    let status: String = sqlx::query_scalar("SELECT status FROM citizens WHERE id = $1")
+        .bind(&citizen_id)
+        .fetch_one(&pool)
+        .await
+        .expect("status");
+    assert_eq!(status, "pending");
+
+    let password_hash = hash_password("secret123");
+    sqlx::query(
+        r#"
+        INSERT INTO citizen_credentials (citizen_id, password_hash, created_at, updated_at)
+        VALUES ($1, $2, NOW(), NOW())
+        "#,
+    )
+    .bind(&citizen_id)
+    .bind(&password_hash)
+    .execute(&pool)
+    .await
+    .expect("insert password");
+
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        node_registry: Arc::new(NodeRegistry::new(pool.clone())),
+        node_id: "TEST-NODE".to_string(),
+    });
+
+    let pending_login = login_handler(
+        State(state.clone()),
+        axum::Json(LoginRequest {
+            name: citizen_name.clone(),
+            password: "secret123".to_string(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(pending_login.status(), StatusCode::BAD_REQUEST);
+    let pending_body: ApiResponse = serde_json::from_slice(
+        &axum::body::to_bytes(pending_login.into_body(), usize::MAX)
+            .await
+            .expect("pending login body"),
+    )
+    .expect("pending login json");
+    assert_eq!(pending_body.status, "error");
+    assert_eq!(
+        pending_body.error.as_deref(),
+        Some("Вход недоступен: паспорт ещё не выдан (статус pending). Обратитесь к регистратору.")
+    );
+
+    activate_citizen_with_passport(&pool, &citizen_id, &citizen_name).await;
+
+    let active_status: String = sqlx::query_scalar("SELECT status FROM citizens WHERE id = $1")
+        .bind(&citizen_id)
+        .fetch_one(&pool)
+        .await
+        .expect("active status");
+    assert_eq!(active_status, "active");
+
+    let login_resp = login_handler(
+        State(state),
+        axum::Json(LoginRequest {
+            name: citizen_name,
+            password: "secret123".to_string(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: ApiResponse = serde_json::from_slice(
+        &axum::body::to_bytes(login_resp.into_body(), usize::MAX)
+            .await
+            .expect("login body"),
+    )
+    .expect("login json");
+    assert_eq!(login_body.status, "success");
+}
