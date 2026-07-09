@@ -157,7 +157,7 @@ pub fn approval_threshold(citizen_count: i64) -> i32 {
 }
 
 pub fn is_elevated_role(role: &str) -> bool {
-    matches!(role, "Guardian" | "Judge" | "Aiya")
+    crate::types::is_governance_role_str(role)
 }
 
 async fn citizen_count(pool: &PgPool) -> Result<i64, CandidacyError> {

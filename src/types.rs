@@ -36,6 +36,15 @@ impl Role {
             Role::Citizen => true,
         }
     }
+
+    /// Governance roles (Guardian, Judge, Aiya) are assigned only via candidacy appointment.
+    pub fn is_governance(&self) -> bool {
+        matches!(self, Role::Aiya | Role::Guardian | Role::Judge)
+    }
+}
+
+pub fn is_governance_role_str(role: &str) -> bool {
+    matches!(role, "Aiya" | "Guardian" | "Judge")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -163,5 +172,15 @@ mod tests {
         assert!(Role::Guardian.satisfies(&Role::Judge));
         assert!(!Role::Citizen.satisfies(&Role::Guardian));
         assert!(Role::Citizen.satisfies(&Role::Citizen));
+    }
+
+    #[test]
+    fn governance_role_detection() {
+        assert!(Role::Guardian.is_governance());
+        assert!(Role::Judge.is_governance());
+        assert!(Role::Aiya.is_governance());
+        assert!(!Role::Citizen.is_governance());
+        assert!(super::is_governance_role_str("Guardian"));
+        assert!(!super::is_governance_role_str("Citizen"));
     }
 }

@@ -46,11 +46,41 @@ echo "alice в статусе pending"
 
 echo -e "\n"
 
-echo "2. Регистрация гражданина bob"
+echo "2. Регистрация гражданина bob (только Citizen)"
 curl -s -X POST $BASE_URL/citizen/register \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"name": "bob", "public_key": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c", "role": "Guardian"}' | jq '.'
+  -d '{"name": "bob", "public_key": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c", "role": "Citizen"}' | jq '.'
+
+echo -e "\n"
+
+echo "2b. Ожидание подтверждения bob в блокчейне (до 35 сек)"
+BOB_ID=""
+for _ in $(seq 1 35); do
+  BOB_ID=$(curl -s "$BASE_URL/citizen/list" -H "Authorization: Bearer $API_KEY" | jq -r '.data.citizens[]? | select(.name=="bob") | .id')
+  if [ -n "$BOB_ID" ] && [ "$BOB_ID" != "null" ]; then
+    echo "bob подтверждён: $BOB_ID"
+    break
+  fi
+  sleep 1
+done
+if [ -z "$BOB_ID" ] || [ "$BOB_ID" = "null" ]; then
+  echo "Ошибка: bob не появился в реестре после регистрации" >&2
+  exit 1
+fi
+
+echo "2c. Прямое назначение Guardian должно быть отклонено"
+ROLE_RESP=$(curl -s -X PATCH "$BASE_URL/citizen/$BOB_ID/role" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "Guardian"}')
+echo "$ROLE_RESP" | jq '.'
+ROLE_STATUS=$(echo "$ROLE_RESP" | jq -r '.status')
+if [ "$ROLE_STATUS" != "error" ]; then
+  echo "Ошибка: ожидался отказ при прямом назначении Guardian, получен: $ROLE_STATUS" >&2
+  exit 1
+fi
+echo "прямое назначение Guardian отклонено (роль только через кандидатуру)"
 
 echo -e "\n"
 

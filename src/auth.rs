@@ -367,10 +367,6 @@ impl AuthContext {
         !self.is_node && (self.is_master || self.role == Role::Aiya)
     }
 
-    pub fn can_assign_elevated_role(&self) -> bool {
-        !self.is_node && (self.is_master || matches!(self.role, Role::Aiya | Role::Guardian))
-    }
-
     pub fn can_manage_citizens(&self) -> bool {
         !self.is_node && (self.is_master || matches!(self.role, Role::Aiya | Role::Guardian))
     }
