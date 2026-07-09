@@ -14,3 +14,7 @@ ON CONFLICT (name) DO NOTHING;
 -- Citizen status: pending until passport issued; active after passport.
 UPDATE citizens SET status = 'active' WHERE passport_issued = true;
 UPDATE citizens SET status = 'pending' WHERE passport_issued = false AND name != 'successful';
+
+-- Seed test citizens stay active so QUAZAR_INIT_TEST_KEYS and smoke candidacy flow work.
+UPDATE citizens SET status = 'active', passport_issued = TRUE
+WHERE name IN ('test_citizen', 'buyer_citizen', 'seller_citizen');

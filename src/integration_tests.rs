@@ -624,7 +624,6 @@ async fn candidacy_nomination_vote_approve_flow() {
 }
 
 #[tokio::test]
-#[tokio::test]
 async fn governance_role_assignment_requires_candidacy() {
     use crate::blockchain::build_signed_citizen_role_event;
     use crate::validator::EventValidator;
@@ -1264,6 +1263,7 @@ async fn api_keys_role_matches_citizens_after_sync() {
         eprintln!("skip api_keys_role_matches_citizens_after_sync: PostgreSQL unavailable");
         return;
     };
+    db::run_migrations(&pool).await.expect("migrations");
     ensure_test_auth_secrets();
 
     let citizen_name = format!(
