@@ -15,6 +15,7 @@ export QUAZAR_NODE_ID="${QUAZAR_NODE_ID:-QZ-NODE-2}"
 export QUAZAR_BLOCK_MIN_EVENTS="${QUAZAR_BLOCK_MIN_EVENTS:-1}"
 export QUAZAR_BLOCK_MAX_WAIT_SECS="${QUAZAR_BLOCK_MAX_WAIT_SECS:-5}"
 export QUAZAR_FORCE_PRODUCER="${QUAZAR_FORCE_PRODUCER:-true}"
+export QUAZAR_RATE_LIMIT_RPS="${QUAZAR_RATE_LIMIT_RPS:-200}"
 if [ "${SMOKE_USE_RANDOM_PORT:-1}" = "1" ]; then
   export QUAZAR_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')"
 fi
@@ -209,9 +210,6 @@ BLOCKS=$(curl -sf "$BASE_URL/blocks" \
 echo "$BLOCKS" | grep -q '"status":"success"'
 echo "$BLOCKS" | grep -q "$SMOKE_NAME"
 
-issue_passport_and_wait "$SMOKE_ID"
-echo "Smoke citizen passport issued (active)"
-
 KEYS=$(curl -sf "$BASE_URL/keys" \
   -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
 echo "$KEYS" | grep -q '"status":"success"'
@@ -226,6 +224,9 @@ SVOD_CAT=$(curl -sf "$BASE_URL/svod/categories" \
   -H "Authorization: Bearer $QUAZAR_MASTER_KEY")
 echo "$SVOD_CAT" | grep -q '"status":"success"'
 echo "$SVOD_CAT" | grep -q 'IT'
+
+issue_passport_and_wait "$SMOKE_ID"
+echo "Smoke citizen passport issued (active)"
 
 # Candidacy: nominate → vote (For) → appoint (if Approved)
 ensure_registered_citizen "testcitizen" "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f8077986"
