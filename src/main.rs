@@ -213,6 +213,7 @@ async fn main() {
         .route("/keys", post(keys::create_api_key))
         .route("/keys", get(keys::list_api_keys))
         .route("/keys/revoke", post(keys::revoke_api_key))
+        .route("/keys/sync", post(keys::sync_api_keys))
         .route("/keys/internal/export", get(keys::internal_export_keys))
         .route("/keys/internal/upsert", post(keys::internal_upsert_key))
         .route("/keys/internal/revoke", post(keys::internal_revoke_key))

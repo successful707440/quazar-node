@@ -43,17 +43,19 @@ pub async fn create_api_key(
     if req.key.trim().len() < 8 {
         return response::bad_request("API key must be at least 8 characters");
     }
-    let Some(role) = Role::from_str(&req.role) else {
-        return response::bad_request("Invalid role");
-    };
     if req.citizen_name.trim().is_empty() {
         return response::bad_request("citizen_name is required");
     }
 
-    match KeyStore::upsert_key(&state.db, req.key.trim(), role.clone(), req.citizen_name.trim()).await
+    let citizen_name = req.citizen_name.trim();
+    let Some(role) = KeyStore::lookup_citizen_role(&state.db, citizen_name).await else {
+        return response::bad_request("Citizen not found");
+    };
+
+    match KeyStore::upsert_key(&state.db, req.key.trim(), role.clone(), citizen_name).await
     {
         Ok(()) => {
-            push_key_to_peers(&state, req.key.trim(), role, req.citizen_name.trim()).await;
+            push_key_to_peers(&state, req.key.trim(), role, citizen_name).await;
             Json(ApiResponse::success(serde_json::json!({
                 "message": "API key created or updated",
                 "key_masked": crate::auth::mask_key(req.key.trim()),
@@ -128,6 +130,24 @@ pub async fn internal_export_keys(
     }
 }
 
+pub async fn sync_api_keys(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    if !auth.can_manage_api_keys() {
+        return response::forbidden("Only Aiya can sync API keys");
+    }
+
+    match KeyStore::sync_roles_from_citizens(&state.db).await {
+        Ok(updated) => Json(ApiResponse::success(serde_json::json!({
+            "message": "API key roles synced from citizens registry",
+            "updated": updated,
+        })))
+        .into_response(),
+        Err(e) => response::internal_error(format!("Failed to sync API key roles: {}", e)),
+    }
+}
+
 pub async fn internal_upsert_key(
     Extension(auth): Extension<AuthContext>,
     State(state): State<Arc<AppState>>,
@@ -136,14 +156,20 @@ pub async fn internal_upsert_key(
     if !auth.is_node {
         return response::forbidden("Node credentials required");
     }
-    let Some(role) = Role::from_str(&req.role) else {
-        return response::bad_request("Invalid role");
-    };
     if req.key.trim().is_empty() || req.citizen_name.trim().is_empty() {
         return response::bad_request("key and citizen_name are required");
     }
 
-    match KeyStore::upsert_key(&state.db, req.key.trim(), role, req.citizen_name.trim()).await {
+    let citizen_name = req.citizen_name.trim();
+    let role = match KeyStore::lookup_citizen_role(&state.db, citizen_name).await {
+        Some(role) => role,
+        None => match Role::from_str(&req.role) {
+            Some(role) => role,
+            None => return response::bad_request("Invalid role"),
+        },
+    };
+
+    match KeyStore::upsert_key(&state.db, req.key.trim(), role, citizen_name).await {
         Ok(()) => Json(ApiResponse::success(serde_json::json!({
             "message": "API key synced",
             "key_masked": crate::auth::mask_key(req.key.trim()),
