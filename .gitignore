@@ -3,6 +3,8 @@
 *.pid
 *.log
 .env
+agent/.env
+agent/state.json
 *.backup
 *.save
 .cursorrules
