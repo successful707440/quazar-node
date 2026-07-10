@@ -4,8 +4,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::{
+    body::Bytes,
     extract::{ConnectInfo, State},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -117,11 +118,36 @@ pub struct VerifyCodeResponse {
     pub message: String,
 }
 
+fn parse_json_body<T: for<'de> Deserialize<'de>>(body: &Bytes) -> Result<T, Response> {
+    if body.is_empty() {
+        return Err(response::bad_request(
+            "Пустое тело запроса. Отправьте JSON с данными (например, {\"email\":\"you@example.com\"}).",
+        ));
+    }
+
+    match serde_json::from_slice(body) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            let message = if err.is_eof() {
+                "Пустое тело запроса. Отправьте JSON с данными."
+            } else {
+                "Некорректный JSON в теле запроса."
+            };
+            Err(response::bad_request(message))
+        }
+    }
+}
+
 pub async fn send_code_handler(
     State(_state): State<Arc<AppState>>,
     connect_info: Option<ConnectInfo<SocketAddr>>,
-    Json(req): Json<SendCodeRequest>,
+    body: Bytes,
 ) -> impl IntoResponse {
+    let req: SendCodeRequest = match parse_json_body(&body) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+
     let email = normalize_email(&req.email);
     if !is_valid_email(&email) {
         return response::bad_request("Введите корректный email-адрес");
@@ -186,8 +212,13 @@ pub async fn send_code_handler(
 
 pub async fn verify_code_handler(
     State(_state): State<Arc<AppState>>,
-    Json(req): Json<VerifyCodeRequest>,
+    body: Bytes,
 ) -> impl IntoResponse {
+    let req: VerifyCodeRequest = match parse_json_body(&body) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+
     let email = normalize_email(&req.email);
     let code = req.code.trim();
 
@@ -245,5 +276,12 @@ mod tests {
         let code = generate_code();
         assert_eq!(code.len(), 6);
         assert!(code.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn parse_json_body_rejects_empty() {
+        let body = Bytes::new();
+        let result: Result<SendCodeRequest, _> = parse_json_body(&body);
+        assert!(result.is_err());
     }
 }

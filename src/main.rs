@@ -182,6 +182,7 @@ async fn main() {
             "/api/citizenship-application",
             post(citizenship_application_handler),
         )
+        .route("/api/public/stats", get(public_stats_handler))
         .route("/candidacy/list", get(list_candidacies_handler))
         .route("/candidacy/:id", get(get_candidacy_handler))
         .route("/initiative/list", get(list_initiatives_handler))

@@ -768,3 +768,37 @@ pub async fn search_citizens(
     };
     (StatusCode::OK, Json(ApiResponse::success(response)))
 }
+
+#[derive(Debug, Serialize)]
+pub struct PublicStatsResponse {
+    citizens_with_passport: i64,
+}
+
+pub async fn public_stats_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let count: i64 = match sqlx::query_scalar(
+        "SELECT COUNT(*) FROM citizens WHERE passport_issued = TRUE",
+    )
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to count citizens with passport");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error("Database error")),
+            )
+                .into_response();
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success(PublicStatsResponse {
+            citizens_with_passport: count,
+        })),
+    )
+        .into_response()
+}

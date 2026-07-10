@@ -561,6 +561,22 @@
       box-shadow: 0 0 0 3px rgba(230, 57, 70, 0.15);
     }
 
+    .form-group input[readonly],
+    .form-group input.input-readonly {
+      background: rgba(5, 5, 8, 0.75);
+      border-color: rgba(212, 168, 83, 0.2);
+      color: rgba(245, 240, 230, 0.85);
+      cursor: default;
+      user-select: all;
+    }
+
+    .form-group input[readonly]:focus,
+    .form-group input.input-readonly:focus {
+      border-color: rgba(212, 168, 83, 0.2);
+      box-shadow: none;
+      outline: none;
+    }
+
     .form-group textarea { resize: vertical; min-height: 120px; }
 
     .error-msg {
@@ -1075,7 +1091,7 @@
       <nav id="nav">
         <a href="#about">О нас</a>
         <a href="#constitution" class="constitution-link">Конституция</a>
-        <a href="#register" class="nav-register" id="registerLink">Регистрация</a>
+        <a href="#register" class="nav-register" id="registerLink">Вход</a>
       </nav>
     </div>
   </header>
@@ -1093,7 +1109,7 @@
           <p class="hero-subtitle">Цифровое государство без границ. Вступи в сообщество, которое строит будущее</p>
           <p class="motto">«Объединяя усилия, создаем будущее»</p>
           <div class="citizen-counter">
-            <span class="count" id="citizenCount">12</span>
+            <span class="count" id="citizenCount">—</span>
             <span class="label">граждан<br>Квазара</span>
           </div>
           <a href="#apply" class="btn btn-primary cta-apply">🚀 Подать заявку</a>
@@ -1178,8 +1194,8 @@
         <div class="steps">
           <div class="step" data-animate>
             <div class="step-number">01</div>
-            <h3>Подтверди email</h3>
-            <p>Укажи email и введи код из письма — затем заполни заявку с желаемым именем и описанием вклада</p>
+            <h3>Войдите</h3>
+            <p>Укажи email и введи код из письма для входа — затем заполни заявку с желаемым именем и описанием вклада</p>
           </div>
           <div class="step" data-animate>
             <div class="step-number">02</div>
@@ -1206,9 +1222,9 @@
         <div class="form-wrapper">
           <div id="applyGate" class="apply-gate">
             <div class="apply-gate-icon">🔐</div>
-            <h3>Подтвердите email для подачи заявки</h3>
-            <p>Чтобы подать заявку на гражданство, сначала подтвердите свой email. Мы отправим 6-значный код на вашу почту.</p>
-            <button type="button" class="btn btn-primary cta-apply">✦ Подтвердить email</button>
+            <h3>Войдите для подачи заявки</h3>
+            <p>Подтвердите email для входа, чтобы подать заявку на гражданство Квазара. Мы отправим 6-значный код на вашу почту.</p>
+            <button type="button" class="btn btn-primary cta-apply">✦ Войти</button>
           </div>
 
           <form id="application-form" class="hidden" novalidate>
@@ -1224,8 +1240,8 @@
             </div>
 
             <div class="form-group">
-              <label for="email">Email</label>
-              <input type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email">
+              <label for="email">Email для связи <span class="hint">(подтверждён при входе)</span></label>
+              <input type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email" aria-readonly="true">
               <div class="error-msg" id="emailError">Введите корректный email-адрес</div>
             </div>
 
@@ -1275,13 +1291,13 @@
   <div class="constitution-modal" id="registerModal" role="dialog" aria-modal="true" aria-labelledby="registerTitle" hidden>
     <div class="constitution-dialog">
       <div class="constitution-header">
-        <h2 id="registerTitle">✦ Регистрация</h2>
+        <h2 id="registerTitle">✦ Вход</h2>
         <button type="button" class="constitution-close" id="registerClose" aria-label="Закрыть">✕</button>
       </div>
       <div class="constitution-body">
         <div id="registerStep1">
           <div class="register-step-label">Шаг 1 из 2 · Укажите ваш email</div>
-          <p class="register-intro">Подтвердите email, чтобы подать заявку на гражданство. Код подтверждения придёт с <strong>quazarvs@gmail.com</strong>.</p>
+          <p class="register-intro">Подтвердите email для входа. Код подтверждения придёт с <strong>quazarvs@gmail.com</strong>.</p>
           <form id="registerForm" novalidate>
             <div class="form-group">
               <label for="regEmail">Ваш email <span class="hint">(куда придёт код)</span></label>
@@ -1311,7 +1327,7 @@
             </div>
             <div class="register-error" id="verifyError" role="alert"></div>
             <div class="register-actions">
-              <button type="submit" class="btn btn-primary" id="verifySubmitBtn">Подтвердить регистрацию</button>
+              <button type="submit" class="btn btn-primary" id="verifySubmitBtn">Войти</button>
               <button type="button" class="register-secondary" id="resendCode">Отправить код повторно</button>
               <button type="button" class="register-secondary" id="backToEmail">← Изменить email</button>
             </div>
@@ -1320,8 +1336,8 @@
 
         <div id="registerSuccess" class="register-success-panel" hidden>
           <div class="success-icon">🎉</div>
-          <h3>Email подтверждён!</h3>
-          <p>Ваш email успешно подтверждён. Теперь заполните заявку на гражданство Квазара.</p>
+          <h3>Вы вошли!</h3>
+          <p>Email подтверждён. Теперь заполните заявку на гражданство Квазара.</p>
           <button type="button" class="btn btn-primary cta-apply" id="registerGoApply" style="margin-top:1.5rem">Перейти к заявке</button>
         </div>
       </div>
@@ -1702,7 +1718,7 @@
         hideSubmitError();
 
         if (!isEmailVerified()) {
-          showSubmitError('Подтвердите email, чтобы отправить заявку.');
+          showSubmitError('Войдите, чтобы отправить заявку.');
           openRegister();
           return;
         }
@@ -1715,7 +1731,7 @@
 
         quazarApiPost('/api/citizenship-application', {
           name: nameInput.value.trim(),
-          email: emailInput.value.trim(),
+          email: getVerifiedEmail(),
           reason: contributionInput.value.trim()
         })
           .then(function () {
@@ -1952,6 +1968,27 @@
 
       var QUAZAR_API_BASE = resolveQuazarApiBase();
 
+      (function loadCitizenCount() {
+        var el = document.getElementById('citizenCount');
+        if (!el) return;
+
+        var base = QUAZAR_API_BASE.replace(/\/$/, '');
+        fetch(base + '/api/public/stats', {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' }
+        }).then(function (response) {
+          return response.json().catch(function () { return null; });
+        }).then(function (data) {
+          if (!data || data.status !== 'success' || !data.data) return;
+          var count = data.data.citizens_with_passport;
+          if (typeof count === 'number' && count >= 0) {
+            el.textContent = String(count);
+          }
+        }).catch(function () {
+          // keep fallback "—"
+        });
+      })();
+
       var supportsHistoryState = (function () {
         if (location.protocol === 'file:') return false;
         try {
@@ -2012,14 +2049,19 @@
         if (verified) {
           applyGate.classList.add('hidden');
           form.classList.remove('hidden');
-          if (verifiedEmail && !emailInput.value.trim()) {
-            emailInput.value = verifiedEmail;
-          }
+          emailInput.value = verifiedEmail;
           emailInput.readOnly = true;
+          emailInput.setAttribute('aria-readonly', 'true');
+          emailInput.classList.add('input-readonly');
+          emailInput.setAttribute('tabindex', '-1');
         } else {
           applyGate.classList.remove('hidden');
           form.classList.add('hidden');
+          emailInput.value = '';
           emailInput.readOnly = false;
+          emailInput.removeAttribute('aria-readonly');
+          emailInput.classList.remove('input-readonly');
+          emailInput.removeAttribute('tabindex');
         }
       }
 
@@ -2098,6 +2140,10 @@
         var base = QUAZAR_API_BASE.replace(/\/$/, '');
         var controller = new AbortController();
         var timeoutId = setTimeout(function () { controller.abort(); }, SUBMIT_TIMEOUT_MS);
+        var jsonBody = JSON.stringify(payload != null ? payload : {});
+        if (typeof jsonBody !== 'string') {
+          jsonBody = '{}';
+        }
 
         return fetch(base + path, {
           method: 'POST',
@@ -2105,18 +2151,29 @@
             'Content-Type': 'application/json',
             'Accept': 'application/json'
           },
-          body: JSON.stringify(payload),
+          body: jsonBody,
           signal: controller.signal
         }).then(function (response) {
           clearTimeout(timeoutId);
-          return response.json().catch(function () {
-            return { status: 'error', error: 'Некорректный ответ сервера' };
-          }).then(function (data) {
-            if (!response.ok || data.status === 'error') {
-              var errMsg = data.error || data.message || 'Ошибка сервера (' + response.status + ')';
+          return response.text().then(function (text) {
+            var data = null;
+            if (text) {
+              try {
+                data = JSON.parse(text);
+              } catch (parseErr) {
+                if (!response.ok) {
+                  throw new Error(text.trim() || 'Некорректный ответ сервера');
+                }
+                throw new Error('Некорректный ответ сервера');
+              }
+            } else {
+              data = {};
+            }
+            if (!response.ok || (data && data.status === 'error')) {
+              var errMsg = (data && (data.error || data.message)) || 'Ошибка сервера (' + response.status + ')';
               throw new Error(errMsg);
             }
-            return data.data || data;
+            return (data && data.data) || data;
           });
         }).catch(function (err) {
           clearTimeout(timeoutId);
@@ -2133,6 +2190,10 @@
       function formSubmitPost(url, payload) {
         var controller = new AbortController();
         var timeoutId = setTimeout(function () { controller.abort(); }, SUBMIT_TIMEOUT_MS);
+        var jsonBody = JSON.stringify(payload != null ? payload : {});
+        if (typeof jsonBody !== 'string') {
+          jsonBody = '{}';
+        }
 
         return fetch(url, {
           method: 'POST',
@@ -2140,7 +2201,7 @@
             'Content-Type': 'application/json',
             'Accept': 'application/json'
           },
-          body: JSON.stringify(payload),
+          body: jsonBody,
           signal: controller.signal
         }).then(function (response) {
           clearTimeout(timeoutId);
