@@ -1192,25 +1192,20 @@ version = "0.11.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0da65617f6cb926332d039cb578aad56178da86e128db6a1b09f4c94fa5b3349"
 dependencies = [
- "async-trait",
  "base64 0.22.1",
  "email-encoding",
  "email_address",
  "fastrand",
- "futures-io",
- "futures-util",
  "httpdate",
  "idna",
  "mime",
+ "native-tls",
  "nom",
  "percent-encoding",
  "quoted_printable",
- "rustls",
  "socket2 0.6.4",
  "tokio",
- "tokio-rustls",
  "url",
- "webpki-roots 1.0.8",
 ]
 
 [[package]]
@@ -1827,7 +1822,6 @@ version = "0.23.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b92b125634d9b795e7beca796cc790df15a7fb38323bf3196fda83292d06b1f"
 dependencies = [
- "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -2491,16 +2485,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
 dependencies = [
  "native-tls",
- "tokio",
-]
-
-[[package]]
-name = "tokio-rustls"
-version = "0.26.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
-dependencies = [
- "rustls",
  "tokio",
 ]
 

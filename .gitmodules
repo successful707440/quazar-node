@@ -1,0 +1,3 @@
+[submodule "constitution"]
+	path = constitution
+	url = https://github.com/successful707440/constitution.git
