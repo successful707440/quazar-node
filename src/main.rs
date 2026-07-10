@@ -18,6 +18,7 @@ mod blockchain;
 mod candidacy;
 mod chat;
 mod citizen;
+mod citizenship_application;
 mod db;
 mod email;
 mod exchange;
@@ -44,6 +45,7 @@ mod integration_tests;
 
 use auth::{init_master_key, init_node_secret, init_reg_secret, master_key, node_secret, reg_secret, KeyStore};
 use auth_login::{check_password_handler, login_handler, set_password_handler, sync_test_passwords};
+use citizenship_application::citizenship_application_handler;
 use register_verify::{send_code_handler, verify_code_handler};
 use crypto::assert_production_secrets;
 use citizen::*;
@@ -176,6 +178,10 @@ async fn main() {
         .route("/auth/check", get(check_password_handler))
         .route("/auth/register/send-code", post(send_code_handler))
         .route("/auth/register/verify-code", post(verify_code_handler))
+        .route(
+            "/api/citizenship-application",
+            post(citizenship_application_handler),
+        )
         .route("/candidacy/list", get(list_candidacies_handler))
         .route("/candidacy/:id", get(get_candidacy_handler))
         .route("/initiative/list", get(list_initiatives_handler))

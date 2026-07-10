@@ -102,3 +102,83 @@ pub async fn send_verification_code(
 
     result
 }
+
+fn send_citizenship_application_blocking(
+    config: &SmtpConfig,
+    to_email: &str,
+    name: &str,
+    applicant_email: &str,
+    reason: &str,
+) -> Result<(), String> {
+    let body = format!(
+        "--- НОВАЯ ЗАЯВКА НА ГРАЖДАНСТВО КВАЗАРА ---\n\
+         Имя: {name}\n\
+         Email: {email}\n\
+         Полезность: {reason}\n\
+         --- КОНЕЦ ЗАЯВКИ ---",
+        email = applicant_email,
+    );
+
+    let from_mailbox: Mailbox = Mailbox::new(
+        Some(config.from_name.clone()),
+        config
+            .user
+            .parse()
+            .map_err(|e| format!("invalid from address: {e}"))?,
+    );
+
+    let email = Message::builder()
+        .from(from_mailbox)
+        .to(to_email
+            .parse()
+            .map_err(|e| format!("invalid recipient address: {e}"))?)
+        .subject("Новая заявка на гражданство Квазара")
+        .header(ContentType::TEXT_PLAIN)
+        .body(body)
+        .map_err(|e| format!("failed to build email: {e}"))?;
+
+    let creds = Credentials::new(config.user.clone(), config.app_password.clone());
+
+    let mailer = SmtpTransport::starttls_relay("smtp.gmail.com")
+        .map_err(|e| format!("SMTP relay error: {e}"))?
+        .port(587)
+        .credentials(creds)
+        .timeout(Some(Duration::from_secs(20)))
+        .build();
+
+    mailer
+        .send(&email)
+        .map_err(|e| format!("failed to send email: {e}"))?;
+
+    Ok(())
+}
+
+pub async fn send_citizenship_application(
+    config: &SmtpConfig,
+    to_email: &str,
+    name: &str,
+    applicant_email: &str,
+    reason: &str,
+) -> Result<(), String> {
+    let config = config.clone();
+    let to_email = to_email.to_string();
+    let name = name.to_string();
+    let applicant_email = applicant_email.to_string();
+    let reason = reason.to_string();
+
+    timeout(
+        Duration::from_secs(25),
+        tokio::task::spawn_blocking(move || {
+            send_citizenship_application_blocking(
+                &config,
+                &to_email,
+                &name,
+                &applicant_email,
+                &reason,
+            )
+        }),
+    )
+    .await
+    .map_err(|_| "SMTP send timed out (check network or Gmail app password)".to_string())?
+    .map_err(|e| format!("SMTP task failed: {e}"))?
+}

@@ -1,4 +1,4 @@
-use crate::types::QuazarEventType;
+use crate::types::{CityData, QuazarEventType};
 use crate::models::Event;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -324,6 +324,13 @@ impl EventValidator {
                 Self::require_str(data, "target_role")?;
                 Ok(())
             }
+            QuazarEventType::CityRegistered => {
+                let _: CityData = serde_json::from_value(data.clone())
+                    .map_err(|_| ValidationError::DataValidationFailed(
+                        "Неверный формат данных города".to_string(),
+                    ))?;
+                Ok(())
+            }
         }
     }
 
@@ -362,6 +369,25 @@ impl EventValidator {
                     let citizen_id = Self::require_str(&event.data, "citizen_id")?;
                     validate_governance_role_via_candidacy(db, citizen_id, role).await?;
                 }
+            }
+        }
+
+        if matches!(event_type, QuazarEventType::CityRegistered) {
+            let city_data: CityData = serde_json::from_value(event.data.clone())
+                .map_err(|_| ValidationError::DataValidationFailed(
+                    "Неверный формат данных города".to_string(),
+                ))?;
+
+            if event.initiator != city_data.mayor_id {
+                return Err(ValidationError::DataValidationFailed(
+                    "Мэр не может зарегистрировать город от имени другого гражданина".to_string(),
+                ));
+            }
+
+            if city_data.is_capital && event.initiator != "QZ-1" {
+                return Err(ValidationError::DataValidationFailed(
+                    "Только коренной житель (QZ-1) может зарегистрировать столицу".to_string(),
+                ));
             }
         }
 

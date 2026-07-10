@@ -94,6 +94,7 @@ pub enum QuazarEventType {
     CandidateVoted,
     CandidateApproved,
     CandidateAppointed,
+    CityRegistered,
 }
 
 impl ToString for QuazarEventType {
@@ -150,9 +151,20 @@ impl QuazarEventType {
             "CandidateVoted" => Ok(QuazarEventType::CandidateVoted),
             "CandidateApproved" => Ok(QuazarEventType::CandidateApproved),
             "CandidateAppointed" => Ok(QuazarEventType::CandidateAppointed),
+            "CityRegistered" => Ok(QuazarEventType::CityRegistered),
             _ => Err(format!("Unknown event type: {}", s)),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CityData {
+    pub city_name: String,
+    pub mayor_id: String,
+    pub node_id: String,
+    pub registered_at: u64,
+    pub is_capital: bool,
+    pub description: Option<String>,
 }
 
 #[cfg(test)]

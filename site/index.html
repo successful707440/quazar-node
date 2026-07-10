@@ -1212,9 +1212,6 @@
           </div>
 
           <form id="application-form" class="hidden" novalidate>
-            <input type="hidden" name="_subject" value="Новая заявка на гражданство Квазара">
-            <input type="hidden" name="_captcha" value="false">
-            <input type="hidden" name="_template" value="table">
             <input type="text" name="_honey" style="display:none" tabindex="-1" autocomplete="off" aria-hidden="true">
 
             <div class="form-submit-error" id="formSubmitError" role="alert"></div>
@@ -1630,7 +1627,6 @@
       const charCounter = document.getElementById('charCounter');
       const latinRegex = /^[A-Za-z]+$/;
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      const FORM_SUBMIT_URL = 'https://formsubmit.co/ajax/quazarvs@gmail.com';
       const SUBMIT_TIMEOUT_MS = 35000;
       const submitBtnDefaultHtml = submitBtn.innerHTML;
 
@@ -1717,48 +1713,19 @@
 
         setSubmitting(true);
 
-        var controller = new AbortController();
-        var timeoutId = setTimeout(function () {
-          controller.abort();
-        }, SUBMIT_TIMEOUT_MS);
-
-        var payload = {
-          _subject: 'Новая заявка на гражданство Квазара',
-          _captcha: 'false',
-          _template: 'table',
-          desired_name: nameInput.value.trim(),
+        quazarApiPost('/api/citizenship-application', {
+          name: nameInput.value.trim(),
           email: emailInput.value.trim(),
-          contribution: contributionInput.value.trim(),
-          consent: consentInput.checked ? 'yes' : ''
-        };
-
-        fetch(FORM_SUBMIT_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify(payload),
-          signal: controller.signal
+          reason: contributionInput.value.trim()
         })
-          .then(function (response) {
-            clearTimeout(timeoutId);
-            return response.json().then(function (data) {
-              if (!response.ok || data.success === false) {
-                throw new Error(data.message || 'Ошибка сервера');
-              }
-              return data;
-            });
-          })
           .then(function () {
             form.classList.add('hidden');
             formSuccess.classList.add('show');
           })
           .catch(function (err) {
-            clearTimeout(timeoutId);
             var message = err.name === 'AbortError'
-              ? 'Превышено время ожидания (15 с). Проверьте соединение и попробуйте снова.'
-              : 'Не удалось отправить заявку. Попробуйте позже или напишите на quazarvs@gmail.com';
+              ? 'Превышено время ожидания (35 с). Проверьте соединение и попробуйте снова.'
+              : (err.message || 'Не удалось отправить заявку. Попробуйте позже или напишите на quazarvs@gmail.com');
             showSubmitError(message);
             setSubmitting(false);
           });
@@ -1897,7 +1864,7 @@
         nav.classList.remove('open');
         menuToggle.textContent = '☰';
         if (window.location.hash !== '#constitution') {
-          history.pushState(null, '', '#constitution');
+          setPageHash('#constitution');
         }
         modal.hidden = false;
         modal.classList.add('open');
@@ -1910,7 +1877,7 @@
         modal.classList.remove('open');
         document.body.classList.remove('modal-open');
         if (window.location.hash === '#constitution') {
-          history.replaceState(null, '', window.location.pathname + window.location.search);
+          clearPageHash();
         }
         setTimeout(function () {
           if (!modal.classList.contains('open')) modal.hidden = true;
@@ -1950,16 +1917,68 @@
       var registerGoApply = document.getElementById('registerGoApply');
 
       var QUAZAR_EMAIL = 'quazarvs@gmail.com';
-      var isPrivateLan = /^192\.168\.|^10\.|^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(location.hostname);
-      var QUAZAR_API_BASE = window.QUAZAR_API_BASE || (
-        location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-          ? 'http://localhost:8080'
-          : isPrivateLan
-            ? 'http://' + location.hostname + ':8080'
-            : (location.hostname === 'quazar.website' || location.hostname === 'www.quazar.website')
-              ? location.origin
-              : 'https://api.quazar.website'
-      );
+
+      function isPrivateLanHost(hostname) {
+        return /^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+          /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+          /^172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(hostname);
+      }
+
+      function isLocalDevHost(hostname, protocol) {
+        if (protocol === 'file:' || !hostname) return true;
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') return true;
+        return isPrivateLanHost(hostname);
+      }
+
+      function resolveQuazarApiBase() {
+        if (window.QUAZAR_API_BASE) return window.QUAZAR_API_BASE;
+
+        var hostname = location.hostname;
+        var protocol = location.protocol;
+
+        if (isLocalDevHost(hostname, protocol)) {
+          if (!hostname || protocol === 'file:' || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') {
+            return 'http://localhost:8080';
+          }
+          return 'http://' + hostname + ':8080';
+        }
+
+        if (hostname === 'quazar.website' || hostname === 'www.quazar.website') {
+          return location.origin;
+        }
+
+        return 'https://api.quazar.website';
+      }
+
+      var QUAZAR_API_BASE = resolveQuazarApiBase();
+
+      var supportsHistoryState = (function () {
+        if (location.protocol === 'file:') return false;
+        try {
+          history.replaceState(null, '', location.href.split('#')[0]);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      })();
+
+      function setPageHash(hash) {
+        if (supportsHistoryState) {
+          if (hash) {
+            history.pushState(null, '', hash);
+          } else {
+            history.replaceState(null, '', location.pathname + location.search);
+          }
+        } else if (hash) {
+          location.hash = hash;
+        } else if (location.hash) {
+          location.hash = '';
+        }
+      }
+
+      function clearPageHash() {
+        setPageHash('');
+      }
       var ADMIN_FORM_URL = 'https://formsubmit.co/ajax/' + encodeURIComponent(QUAZAR_EMAIL);
       var REG_STORAGE_KEY = 'quazar_reg_pending';
       var VERIFIED_EMAIL_KEY = 'quazar_email_verified';
@@ -2013,7 +2032,7 @@
         nav.classList.remove('open');
         menuToggle.textContent = '☰';
         if (window.location.hash !== '#apply') {
-          history.pushState(null, '', '#apply');
+          setPageHash('#apply');
         }
         document.getElementById('apply').scrollIntoView({ behavior: 'smooth' });
       }
@@ -2178,7 +2197,7 @@
         menuToggle.textContent = '☰';
         if (modal.classList.contains('open')) closeConstitution();
         if (window.location.hash !== '#register') {
-          history.pushState(null, '', '#register');
+          setPageHash('#register');
         }
         resetRegisterModal();
         registerModal.hidden = false;
@@ -2193,7 +2212,7 @@
           document.body.classList.remove('modal-open');
         }
         if (window.location.hash === '#register') {
-          history.replaceState(null, '', window.location.pathname + window.location.search);
+          clearPageHash();
         }
         setTimeout(function () {
           if (!registerModal.classList.contains('open')) registerModal.hidden = true;
@@ -2373,7 +2392,7 @@
           if (isEmailVerified()) {
             updateApplyAccess();
           } else {
-            history.replaceState(null, '', window.location.pathname + window.location.search);
+            clearPageHash();
             openRegister();
           }
         }
