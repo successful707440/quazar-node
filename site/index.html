@@ -1074,6 +1074,139 @@
       .benefits-list { grid-template-columns: 1fr; }
       section { padding: 3.5rem 0; }
     }
+    @media (max-width: 768px) {
+      .chat-layout { grid-template-columns: 1fr; }
+      .chat-auth-panel { order: -1; }
+    }
+
+    /* Chat */
+    #chat {
+      padding-top: 4rem;
+    }
+
+    .chat-layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 1.5rem;
+      align-items: start;
+    }
+
+    .chat-auth-panel,
+    .chat-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.25rem;
+      backdrop-filter: blur(8px);
+    }
+
+    .chat-auth-panel h3,
+    .chat-panel h3 {
+      margin-bottom: 0.75rem;
+      font-size: 1.1rem;
+    }
+
+    .chat-auth-panel p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+
+    .chat-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .chat-status .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #666;
+    }
+
+    .chat-status.live .dot { background: #3ecf8e; }
+    .chat-status.error .dot { background: var(--red); }
+
+    .chat-messages {
+      height: 420px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding: 0.5rem;
+      margin-bottom: 1rem;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px;
+      background: rgba(0,0,0,0.25);
+    }
+
+    .chat-message {
+      max-width: 85%;
+      padding: 0.65rem 0.85rem;
+      border-radius: 12px;
+      font-size: 0.95rem;
+      line-height: 1.45;
+    }
+
+    .chat-message.mine {
+      align-self: flex-end;
+      background: rgba(230, 57, 70, 0.18);
+      border: 1px solid rgba(230, 57, 70, 0.35);
+    }
+
+    .chat-message.theirs {
+      align-self: flex-start;
+      background: rgba(212, 168, 83, 0.12);
+      border: 1px solid rgba(212, 168, 83, 0.25);
+    }
+
+    .chat-message.bot {
+      align-self: flex-start;
+      background: rgba(100, 180, 255, 0.12);
+      border: 1px solid rgba(100, 180, 255, 0.25);
+    }
+
+    .chat-message .meta {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .chat-message .badge {
+      display: inline-block;
+      margin-left: 0.35rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 999px;
+      font-size: 0.68rem;
+      background: rgba(212, 168, 83, 0.2);
+      color: var(--gold-light);
+    }
+
+    .chat-compose {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .chat-compose input {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,0.35);
+      color: var(--text);
+    }
+
+    .chat-compose button {
+      white-space: nowrap;
+    }
+
+    .chat-hidden { display: none !important; }
+
   </style>
 </head>
 <body>
@@ -1090,6 +1223,7 @@
       <button class="menu-toggle" id="menuToggle" aria-label="Меню">☰</button>
       <nav id="nav">
         <a href="#about">О нас</a>
+        <a href="#chat">Чат</a>
         <a href="#constitution" class="constitution-link">Конституция</a>
         <a href="#register" class="nav-register" id="registerLink">Вход</a>
       </nav>
@@ -1266,6 +1400,41 @@
             <div class="success-icon">🎉</div>
             <h3>Заявка отправлена!</h3>
             <p>Мы рассмотрим её и свяжемся с вами по email. Добро пожаловать в будущее Квазара.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Chat -->
+    <section id="chat">
+      <div class="container">
+        <div class="section-header">
+          <span class="tag">Сообщество</span>
+          <h2>Чат граждан</h2>
+          <p>Общайтесь в реальном времени — ответы Квазара приходят автоматически через OpenClaw. В интерфейсе отображаются сообщения за последние 15 минут.</p>
+        </div>
+        <div class="chat-layout">
+          <aside class="chat-auth-panel">
+            <h3>Доступ к чату</h3>
+            <p>Введите API-ключ гражданина. Для теста: <code>successful_app_key_2026</code></p>
+            <div class="form-group">
+              <label for="chatApiKey">API-ключ</label>
+              <input type="password" id="chatApiKey" placeholder="your_api_key" autocomplete="off">
+            </div>
+            <button type="button" class="btn btn-primary" id="chatConnectBtn">Подключиться</button>
+            <button type="button" class="btn btn-secondary chat-hidden" id="chatDisconnectBtn">Отключиться</button>
+            <div class="chat-status" id="chatStatus">
+              <span class="dot"></span>
+              <span id="chatStatusText">Не подключено</span>
+            </div>
+          </aside>
+          <div class="chat-panel">
+            <h3>Общий чат</h3>
+            <div class="chat-messages" id="chatMessages" aria-live="polite"></div>
+            <form class="chat-compose" id="chatForm">
+              <input type="text" id="chatInput" maxlength="2000" placeholder="Напишите сообщение..." disabled>
+              <button type="submit" class="btn btn-primary" id="chatSendBtn" disabled>Отправить</button>
+            </form>
           </div>
         </div>
       </div>
@@ -2486,6 +2655,263 @@
           modal.hidden = true;
         }
       });
+
+      /* Live chat (SSE + REST) */
+      var CHAT_KEY_STORAGE = 'quazar_chat_api_key';
+      var CHAT_CHANNEL_ID = 'quazar_chat';
+      var CHAT_UI_TTL_MS = 15 * 60 * 1000;
+      var CHAT_UI_SWEEP_MS = 60 * 1000;
+      var chatApiKeyInput = document.getElementById('chatApiKey');
+      var chatConnectBtn = document.getElementById('chatConnectBtn');
+      var chatDisconnectBtn = document.getElementById('chatDisconnectBtn');
+      var chatStatus = document.getElementById('chatStatus');
+      var chatStatusText = document.getElementById('chatStatusText');
+      var chatMessages = document.getElementById('chatMessages');
+      var chatForm = document.getElementById('chatForm');
+      var chatInput = document.getElementById('chatInput');
+      var chatSendBtn = document.getElementById('chatSendBtn');
+      var chatEventSource = null;
+      var chatMessageIds = new Set();
+      var chatMessageTimers = new Map();
+      var chatApiKey = null;
+      var myCitizenId = null;
+
+      function isChatMessageVisible(msg) {
+        if (!msg) return false;
+        if (msg.crossChannel && msg.crossChannel.sourceChannel === 'tui') return false;
+        if (msg.citizen_id === 'cross-tui' || msg.citizen_name === 'tui') return false;
+        if (msg.citizen_id === 'system_bot' && msg.citizen_name && msg.citizen_name.endsWith(' [tui]')) {
+          return false;
+        }
+        if (!msg.created_at) return true;
+        var ts = Date.parse(msg.created_at);
+        if (isNaN(ts)) return true;
+        return Date.now() - ts < CHAT_UI_TTL_MS;
+      }
+
+      function scheduleChatMessageExpiry(msg) {
+        if (!msg || !msg.id || !msg.created_at) return;
+        var ts = Date.parse(msg.created_at);
+        if (isNaN(ts)) return;
+        var remaining = CHAT_UI_TTL_MS - (Date.now() - ts);
+        if (remaining <= 0) {
+          removeChatMessage(msg.id);
+          return;
+        }
+        if (chatMessageTimers.has(msg.id)) {
+          clearTimeout(chatMessageTimers.get(msg.id));
+        }
+        var timerId = setTimeout(function () {
+          chatMessageTimers.delete(msg.id);
+          removeChatMessage(msg.id);
+        }, remaining);
+        chatMessageTimers.set(msg.id, timerId);
+      }
+
+      function sweepExpiredChatMessages() {
+        var nodes = chatMessages.querySelectorAll('[data-message-id]');
+        nodes.forEach(function (node) {
+          var createdAt = node.getAttribute('data-created-at');
+          if (!createdAt) return;
+          var ts = Date.parse(createdAt);
+          if (!isNaN(ts) && Date.now() - ts >= CHAT_UI_TTL_MS) {
+            removeChatMessage(node.getAttribute('data-message-id'));
+          }
+        });
+      }
+
+      setInterval(sweepExpiredChatMessages, CHAT_UI_SWEEP_MS);
+
+      function setChatStatus(mode, text) {
+        chatStatus.className = 'chat-status' + (mode ? ' ' + mode : '');
+        chatStatusText.textContent = text;
+      }
+
+      function chatHeaders() {
+        return {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer ' + chatApiKey
+        };
+      }
+
+      function renderChatMessage(msg) {
+        if (!msg || !msg.id || chatMessageIds.has(msg.id)) return;
+        if (msg.id === 'sse-connected') return;
+        if (!isChatMessageVisible(msg)) return;
+        chatMessageIds.add(msg.id);
+
+        var el = document.createElement('div');
+        var isBot = msg.citizen_id === 'system_bot';
+        var isMine = myCitizenId && msg.citizen_id === myCitizenId;
+        el.className = 'chat-message ' + (isBot ? 'bot' : (isMine ? 'mine' : 'theirs'));
+        el.setAttribute('data-message-id', msg.id);
+        if (msg.created_at) {
+          el.setAttribute('data-created-at', msg.created_at);
+        }
+
+        var meta = document.createElement('span');
+        meta.className = 'meta';
+        meta.textContent = msg.citizen_name || 'Гражданин';
+        if (msg.crossChannel && msg.crossChannel.sourceChannel) {
+          var badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.textContent = msg.crossChannel.sourceChannel;
+          meta.appendChild(badge);
+        }
+        el.appendChild(meta);
+
+        var body = document.createElement('div');
+        body.textContent = msg.content || '';
+        el.appendChild(body);
+
+        chatMessages.appendChild(el);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        scheduleChatMessageExpiry(msg);
+      }
+
+      function removeChatMessage(messageId) {
+        if (!messageId) return;
+        chatMessageIds.delete(messageId);
+        if (chatMessageTimers.has(messageId)) {
+          clearTimeout(chatMessageTimers.get(messageId));
+          chatMessageTimers.delete(messageId);
+        }
+        var nodes = chatMessages.querySelectorAll('[data-message-id]');
+        nodes.forEach(function (node) {
+          if (node.getAttribute('data-message-id') === messageId) {
+            node.remove();
+          }
+        });
+      }
+
+      function loadChatHistory() {
+        var base = QUAZAR_API_BASE.replace(/\/$/, '');
+        return fetch(base + '/chat/messages?limit=50', {
+          headers: chatHeaders()
+        }).then(function (response) {
+          return response.json();
+        }).then(function (data) {
+          chatMessages.innerHTML = '';
+          chatMessageIds.clear();
+          chatMessageTimers.forEach(function (timerId) { clearTimeout(timerId); });
+          chatMessageTimers.clear();
+          var messages = (data && data.data && data.data.messages) || [];
+          messages.filter(isChatMessageVisible).forEach(renderChatMessage);
+        });
+      }
+
+      function connectChatSse() {
+        if (chatEventSource) {
+          chatEventSource.close();
+          chatEventSource = null;
+        }
+        var base = QUAZAR_API_BASE.replace(/\/$/, '');
+        var url = base + '/api/channel/events?channelId=' + encodeURIComponent(CHAT_CHANNEL_ID) +
+          '&token=' + encodeURIComponent(chatApiKey);
+        chatEventSource = new EventSource(url);
+        chatEventSource.addEventListener('open', function () {
+          setChatStatus('live', 'Live-подключение активно');
+        });
+        chatEventSource.addEventListener('message', function (event) {
+          try {
+            var payload = JSON.parse(event.data);
+            if (payload && payload.type === 'chat.message') {
+              renderChatMessage(payload);
+            } else if (payload && payload.type === 'chat.delete' && Array.isArray(payload.ids)) {
+              payload.ids.forEach(removeChatMessage);
+            }
+          } catch (e) { /* ignore */ }
+        });
+        chatEventSource.onerror = function () {
+          setChatStatus('error', 'SSE отключено, переподключение...');
+        };
+      }
+
+      function enableChatUi(enabled) {
+        chatInput.disabled = !enabled;
+        chatSendBtn.disabled = !enabled;
+        chatConnectBtn.classList.toggle('chat-hidden', enabled);
+        chatDisconnectBtn.classList.toggle('chat-hidden', !enabled);
+        chatApiKeyInput.disabled = enabled;
+      }
+
+      function connectChat() {
+        var key = (chatApiKeyInput.value || '').trim();
+        if (!key) {
+          setChatStatus('error', 'Укажите API-ключ');
+          return;
+        }
+        chatApiKey = key;
+        sessionStorage.setItem(CHAT_KEY_STORAGE, key);
+        enableChatUi(true);
+        setChatStatus('', 'Подключение...');
+        loadChatHistory()
+          .then(function () {
+            connectChatSse();
+          })
+          .catch(function () {
+            setChatStatus('error', 'Не удалось загрузить чат');
+            enableChatUi(false);
+          });
+      }
+
+      function disconnectChat() {
+        if (chatEventSource) {
+          chatEventSource.close();
+          chatEventSource = null;
+        }
+        chatMessageTimers.forEach(function (timerId) { clearTimeout(timerId); });
+        chatMessageTimers.clear();
+        chatApiKey = null;
+        myCitizenId = null;
+        sessionStorage.removeItem(CHAT_KEY_STORAGE);
+        enableChatUi(false);
+        setChatStatus('', 'Не подключено');
+      }
+
+      chatConnectBtn.addEventListener('click', connectChat);
+      chatDisconnectBtn.addEventListener('click', disconnectChat);
+
+      chatForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (!chatApiKey) return;
+        var text = (chatInput.value || '').trim();
+        if (!text) return;
+        chatInput.value = '';
+        chatSendBtn.disabled = true;
+        var base = QUAZAR_API_BASE.replace(/\/$/, '');
+        fetch(base + '/chat/send', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, chatHeaders()),
+          body: JSON.stringify({ content: text })
+        }).then(function (response) {
+          return response.json();
+        }).then(function (data) {
+          if (data && data.status === 'success' && data.data) {
+            myCitizenId = data.data.citizen_id || myCitizenId;
+            renderChatMessage({
+              id: data.data.id,
+              citizen_id: data.data.citizen_id,
+              citizen_name: data.data.citizen_name,
+              content: data.data.content,
+              created_at: data.data.created_at
+            });
+          } else {
+            throw new Error((data && data.error) || 'Ошибка отправки');
+          }
+        }).catch(function () {
+          setChatStatus('error', 'Не удалось отправить сообщение');
+        }).finally(function () {
+          chatSendBtn.disabled = false;
+          chatInput.focus();
+        });
+      });
+
+      var savedChatKey = sessionStorage.getItem(CHAT_KEY_STORAGE);
+      if (savedChatKey) {
+        chatApiKeyInput.value = savedChatKey;
+        connectChat();
+      }
     })();
   </script>
 </body>

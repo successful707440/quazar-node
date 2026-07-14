@@ -161,10 +161,13 @@ pub async fn receive_gossip_chat_message(
     message: ChatMessageRow,
 ) -> Result<ApiResponse, String> {
     match chat::insert_gossip_message(&state.db, &message).await {
-        Ok(chat::GossipInsertResult::Inserted) => Ok(ApiResponse::success(serde_json::json!({
-            "id": message.id,
-            "message": "Chat message accepted"
-        }))),
+        Ok(chat::GossipInsertResult::Inserted) => {
+            crate::channel::notify_chat_message(state, &message, None).await;
+            Ok(ApiResponse::success(serde_json::json!({
+                "id": message.id,
+                "message": "Chat message accepted"
+            })))
+        }
         Ok(chat::GossipInsertResult::AlreadyExists) => Ok(ApiResponse::success(serde_json::json!({
             "id": message.id,
             "message": "Already exists, skipped"

@@ -16,6 +16,7 @@ mod auth_login;
 mod block_producer;
 mod blockchain;
 mod candidacy;
+mod channel;
 mod chat;
 mod citizen;
 mod citizenship_application;
@@ -52,7 +53,14 @@ use citizen::*;
 use candidacy::{
     appoint_handler, get_candidacy_handler, list_candidacies_handler, nominate_handler, vote_handler,
 };
-use chat::{gossip_chat_message_handler, list_messages_handler, send_message_handler};
+use channel::{
+    connect_handler, cross_channel_handler, disconnect_handler, events_handler, health_handler,
+    post_message_handler, status_handler, ws_handler, ChannelHub,
+};
+use chat::{
+    admin_send_message_handler, gossip_chat_message_handler, list_messages_handler,
+    search_db_handler, search_messages_handler, send_message_handler,
+};
 use initiative::{
     get_initiative_handler, list_initiatives_handler, propose_handler as propose_initiative_handler,
     vote_handler as vote_initiative_handler,
@@ -72,6 +80,7 @@ pub struct AppState {
     pub db: PgPool,
     node_registry: Arc<NodeRegistry>,
     pub node_id: String,
+    pub channel_hub: Arc<ChannelHub>,
 }
 
 fn init_tracing() {
@@ -166,6 +175,7 @@ async fn main() {
         db: pool,
         node_registry,
         node_id,
+        channel_hub: Arc::new(ChannelHub::new()),
     });
 
     let state_clone = state.clone();
@@ -183,12 +193,22 @@ async fn main() {
             post(citizenship_application_handler),
         )
         .route("/api/public/stats", get(public_stats_handler))
+        .route("/health", get(health_handler))
+        .route("/api/channel/connect", post(connect_handler))
+        .route("/api/channel/disconnect", post(disconnect_handler))
+        .route("/api/channel/messages", post(post_message_handler))
+        .route("/api/channel/cross-channel-messages", post(cross_channel_handler))
+        .route("/api/channel/events", get(events_handler))
+        .route("/api/channel/status", get(status_handler))
+        .route("/api/channel/ws", get(ws_handler))
+        .route("/api/search", get(search_db_handler))
         .route("/candidacy/list", get(list_candidacies_handler))
         .route("/candidacy/:id", get(get_candidacy_handler))
         .route("/initiative/list", get(list_initiatives_handler))
         .route("/initiative/:id", get(get_initiative_handler))
         .route("/referendum/list", get(list_referendums_handler))
         .route("/referendum/:id", get(get_referendum_handler))
+        .route("/chat/admin/send", post(admin_send_message_handler))
         .with_state(state.clone());
 
     let protected_routes = Router::new()
@@ -245,6 +265,7 @@ async fn main() {
         .route("/referendum/announce", post(announce_handler))
         .route("/referendum/:id/vote", post(vote_referendum_handler))
         .route("/chat/messages", get(list_messages_handler))
+        .route("/chat/search", get(search_messages_handler))
         .route("/chat/send", post(send_message_handler))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .route_layer(middleware::from_fn(rate_limit_middleware))

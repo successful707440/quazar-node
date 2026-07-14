@@ -54,6 +54,7 @@ services:
       GMAIL_USER: ${GMAIL_USER}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
       GMAIL_FROM_NAME: ${GMAIL_FROM_NAME:-Квазар}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-quazar_admin_secure_key}
       QUAZAR_CORS_ORIGINS: "*"
     depends_on:
       postgres:
@@ -86,6 +87,7 @@ services:
       GMAIL_USER: ${GMAIL_USER}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
       GMAIL_FROM_NAME: ${GMAIL_FROM_NAME:-Квазар}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-quazar_admin_secure_key}
     depends_on:
       postgres-2:
         condition: service_healthy
